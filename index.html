@@ -265,6 +265,7 @@ main { flex: 1; min-height: 0; position: relative; }
       <div class="day-panel">
         <div class="day-head">
           <h2 id="dayTitle"></h2>
+          <button class="btn-sub" id="addLesson" style="height:36px;padding:0 12px;font-size:14px">＋ レッスンを入れる</button>
           <span class="hint">長押しして上の日付へ動かすと振替 / タップでお休み・時間変更・追加 / 日付の長押しでその日のコマを全部消す</span>
         </div>
         <div class="list" id="dayList"></div>
@@ -376,6 +377,8 @@ const nameOf = id => (studentById(id) || { name: '(削除済み)' }).name;
 const gradeTag = id => { const g = gradeOf(studentById(id)); return g ? `<span class="grade">${g}</span>` : ''; };
 const byYomi = (a, b) => (a.yomi || '￿' + a.name).localeCompare(b.yomi || '￿' + b.name, 'ja');
 const slotById = id => db.slots.find(s => s.id === id);
+// 不定期の生徒 = いつもの枠を1つも持たない生徒。レッスンは毎回「＋ レッスンを入れる」で入れる
+const isIrregular = id => !db.slots.some(s => s.studentId === id);
 const extraById = id => db.extras.find(x => x.id === id);
 const activeOn = (s, k) => s.from <= k && (!s.until || k < s.until);
 const chKey = src => `${src.slotId}@${src.date}`;
@@ -411,7 +414,7 @@ const unresolved = () => Object.values(db.changes).filter(c => !c.makeup && !c.c
 const jobFor = r => r.type === 'extra' ? { kind: 'extraMove', extraId: r.extra.id } : { kind: 'move', src: { slotId: r.slot.id, date: r.date } };
 function jobInfo(job) {
   if (job.kind === 'move') { const s = slotById(job.src.slotId); return { name: nameOf(s.studentId), len: s.len, label: `${fmt(job.src.date)} ${s.time} の分` }; }
-  if (job.kind === 'extra') return { name: nameOf(job.studentId), len: job.len, label: '追加レッスン' };
+  if (job.kind === 'extra') return { name: nameOf(job.studentId), len: job.len, label: isIrregular(job.studentId) ? 'レッスン' : '追加レッスン' };
   const x = extraById(job.extraId); return { name: nameOf(x.studentId), len: x.len, label: `追加レッスン(${fmt(x.date)} ${x.time})` };
 }
 // その日に埋まっている時間帯。job を渡すと、動かす本人の枠は空きとみなす
@@ -482,7 +485,7 @@ function renderDay() {
   const lessons = rows.filter(r => r.type !== 'absent').length;
   $('dayTitle').textContent = `${fmt(selected)}  ${lessons}コマ`;
   const list = $('dayList'); list.innerHTML = '';
-  if (!db.slots.length) {
+  if (!db.students.length) {
     list.innerHTML = '<div class="empty">まだ時間割がありません。<br>「時間割」タブで生徒を登録するか、「設定」タブで架空データを入れてください。</div>';
     return;
   }
@@ -493,7 +496,7 @@ function renderDay() {
     if (r.type === 'absent') chip = r.change.makeup ? `お休み → ${fmt(r.change.makeup.date)} ${r.change.makeup.time}` : '振替先未定';
     if (r.type === 'makeup') chip = `振替(${fmt(r.date)}の分)`;
     if (r.type === 'moved') chip = `時間変更 ${r.slot.time}→${r.time}`;
-    if (r.type === 'extra') chip = '追加レッスン';
+    if (r.type === 'extra') chip = isIrregular(r.studentId) ? '不定期' : '追加レッスン';
     el.className = `row ${r.type}` + (r.type === 'absent' && !r.change.makeup ? ' unresolved' : '');
     el.innerHTML = `<span class="time">${r.time}<small>〜${endOf(r.time, r.len)}</small></span><span class="name">${esc(r.name)}${gradeTag(r.studentId)}</span>`
       + (r.len === 60 ? '<span class="len">1時間</span>' : '') + (chip ? `<span class="chip">${chip}</span>` : '');
@@ -557,6 +560,17 @@ function renderTimetable() {
         list.appendChild(el);
       });
     });
+    const irr = db.students.filter(st => isIrregular(st.id)).sort(byYomi);
+    if (irr.length) {
+      list.insertAdjacentHTML('beforeend', `<div class="group-head">不定期  ${irr.length}人</div>`);
+      irr.forEach(st => {
+        const el = document.createElement('div');
+        el.className = 'row tt';
+        el.innerHTML = `<span class="time">—</span><span class="name">${esc(st.name)}${gradeTag(st.id)}</span><span class="chip">不定期</span>`;
+        el.addEventListener('click', () => openStudentSheet(st));
+        list.appendChild(el);
+      });
+    }
     return;
   }
   [...db.students].sort(byYomi).forEach(st => {
@@ -565,7 +579,7 @@ function renderTimetable() {
     el.className = 'card student';
     const summary = ss.length
       ? ss.map(s => `${WD[s.dow]} ${s.time}` + (s.len === 60 ? '(1時間)' : '') + (slotNote(s) ? `[${slotNote(s)}]` : '')).join('・')
-      : 'いつもの枠なし';
+      : '不定期(いつもの枠なし)';
     el.innerHTML = `<div class="info"><div class="who">${esc(st.name)}${gradeTag(st.id)}</div><div class="when">${st.yomi ? esc(st.yomi) + ' / ' : ''}${summary}</div></div>`;
     el.addEventListener('click', () => openStudentSheet(st));
     list.appendChild(el);
@@ -657,7 +671,7 @@ function openClearDaySheet(k) {
 function applyJob(job, date, time, len) {
   if (job.kind === 'move') { setMakeup(job.src, date, time); return; }
   if (job.kind === 'extra') {
-    record(() => db.extras.push({ id: uid(), studentId: job.studentId, date, time, len }), `${nameOf(job.studentId)}さん: ${fmt(date)} ${time} に追加レッスンを作成`);
+    record(() => db.extras.push({ id: uid(), studentId: job.studentId, date, time, len }), `${nameOf(job.studentId)}さん: ${fmt(date)} ${time} に${isIrregular(job.studentId) ? 'レッスン' : '追加レッスン'}を入れました`);
     return;
   }
   const x = extraById(job.extraId);
@@ -703,6 +717,23 @@ function openRowSheet(r) {
       ['いつもの予定に戻す', 'warn', () => { closeSheet(); clearChange(src); }], duplicate];
   }
   openActions(`${esc(r.name)}さん`, sub, buttons);
+}
+
+// 「＋ レッスンを入れる」: 生徒を選ぶ → 時間を選ぶ(中身は追加レッスン)。不定期の生徒を先に並べる
+function openAddLessonSheet(k) {
+  if (!db.students.length) { showToast('先に「時間割」タブで生徒を登録してください', false); return; }
+  const sorted = [...db.students].sort(byYomi);
+  const irr = sorted.filter(st => isIrregular(st.id)), others = sorted.filter(st => !isIrregular(st.id));
+  const btn = st => `<button data-id="${st.id}">${esc(st.name)}${gradeTag(st.id)}</button>`;
+  openSheet(`${fmt(k)} にレッスンを入れる`, '生徒を選んでください',
+    (irr.length ? `<div class="group-head">不定期の生徒</div><div class="actions">${irr.map(btn).join('')}</div>` : '')
+    + (others.length ? `<div class="group-head">ほかの生徒(追加レッスン)</div><div class="actions">${others.map(btn).join('')}</div>` : '')
+    + '<div class="actions" style="margin-top:12px"><button class="close">やめる</button></div>');
+  $('sheet').querySelectorAll('button[data-id]').forEach(b => b.addEventListener('click', () => {
+    const own = db.slots.find(s => s.studentId === b.dataset.id);
+    openTimeSheet(k, { kind: 'extra', studentId: b.dataset.id, len: own ? own.len : 30 });
+  }));
+  $('sheet').querySelector('.close').addEventListener('click', closeSheet);
 }
 
 // 時間を選ぶ。lenOverride は追加レッスンの長さ切り替え用
@@ -790,12 +821,24 @@ function readStudentFields() {
 
 function openAddStudentSheet() {
   openSheet('生徒を追加', '名前と、いつもの枠を入力します',
-    `${studentFields(null)}${slotFields(defaultSlot())}
+    `${studentFields(null)}
+    <div class="field"><span>通い方</span><div class="seg" data-name="kind"><button type="button" data-v="weekly" class="on">毎週(いつもの枠あり)</button><button type="button" data-v="irregular">不定期</button></div></div>
+    <div id="slotPart">${slotFields(defaultSlot())}</div>
+    <p class="sub" id="irregularNote" hidden>不定期の生徒は、レッスンが決まるたびにカレンダーの日を選んで「＋ レッスンを入れる」から入れます。</p>
     <div class="actions"><button class="main" id="saveBtn">登録する</button><button class="close">やめる</button></div>`);
   bindSeg();
+  const irregular = () => $('sheet').querySelector('[data-name=kind] .on').dataset.v === 'irregular';
+  $('sheet').querySelectorAll('[data-name=kind] button').forEach(b => b.addEventListener('click', () => {
+    $('slotPart').hidden = irregular(); $('irregularNote').hidden = !irregular();
+  }));
   $('saveBtn').addEventListener('click', () => {
     const info = readStudentFields(), name = info.name;
     if (!name) { showSheetError('名前を入力してください'); return; }
+    if (irregular()) {
+      closeSheet();
+      record(() => db.students.push({ id: uid(), ...info }), `${name}さんを不定期の生徒として登録しました`);
+      return;
+    }
     const v = readSlotFields();
     const conflict = slotConflict(v, null);
     if (conflict) { showSheetError(conflict); return; }
@@ -1113,6 +1156,7 @@ document.querySelectorAll('.tabbar button').forEach(b => b.addEventListener('cli
 }));
 $('ttMode').querySelectorAll('button').forEach(b => b.addEventListener('click', () => { ttMode = b.dataset.mode; renderTimetable(); }));
 $('addStudent').addEventListener('click', openAddStudentSheet);
+$('addLesson').addEventListener('click', () => { stopPicking(); openAddLessonSheet(selected); });
 $('pickCancel').addEventListener('click', stopPicking);
 $('prevMonth').addEventListener('click', () => { viewMonth = new Date(viewMonth.getFullYear(), viewMonth.getMonth() - 1, 1); renderCalendar(); });
 $('nextMonth').addEventListener('click', () => { viewMonth = new Date(viewMonth.getFullYear(), viewMonth.getMonth() + 1, 1); renderCalendar(); });
