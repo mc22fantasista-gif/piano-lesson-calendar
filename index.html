@@ -1,0 +1,1042 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>振替管理</title>
+<!-- M2 試作版: データはこの端末のブラウザ内(localStorage)にだけ保存する -->
+<meta name="theme-color" content="#5b6abf">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="振替管理">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" href="icon-192.png">
+<style>
+:root {
+  --bg: #f6f4f1;
+  --surface: #ffffff;
+  --line: #e3dfd9;
+  --text: #2b2826;
+  --muted: #8a847d;
+  --accent: #5b6abf;
+  --accent-soft: #e8eafb;
+  --sun: #c8473f;
+  --sat: #3d6fb8;
+  --absent: #9a948d;
+  --absent-bg: #efedea;
+  --makeup: #2f8a5b;
+  --makeup-bg: #e3f3ea;
+  --pending: #c97a12;
+  --pending-bg: #fdf0dc;
+  --moved: #2a7aa8;
+  --moved-bg: #e2f0f8;
+  --extra: #8a4fb0;
+  --extra-bg: #f2e8f8;
+  --today: #fff7d6;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { margin: 0; height: 100%; }
+body {
+  background: #d9d5cf;
+  color: var(--text);
+  font-family: -apple-system, "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic UI", "Meiryo", sans-serif;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-text-size-adjust: 100%;
+}
+.app {
+  max-width: 834px; height: 100dvh; margin: 0 auto;
+  background: var(--bg); display: flex; flex-direction: column; overflow: hidden;
+  box-shadow: 0 0 24px rgba(0,0,0,.12);
+}
+header {
+  display: flex; align-items: center; justify-content: space-between; min-height: 64px;
+  padding: calc(12px + env(safe-area-inset-top)) 16px 12px; background: var(--surface); border-bottom: 1px solid var(--line);
+}
+header h1 { font-size: 21px; margin: 0; font-weight: 700; letter-spacing: .02em; }
+.nav-btn {
+  border: 1px solid var(--line); background: var(--surface); color: var(--text);
+  border-radius: 10px; min-width: 44px; height: 40px; font-size: 18px; cursor: pointer;
+}
+.nav-btn.text { font-size: 15px; padding: 0 14px; }
+.month-nav { display: flex; align-items: center; gap: 8px; }
+main { flex: 1; min-height: 0; position: relative; }
+.view { position: absolute; inset: 0; display: flex; flex-direction: column; }
+
+/* 振替先選択モードの帯 */
+.pick-banner {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  background: var(--accent); color: #fff; padding: 10px 16px; font-size: 15px;
+}
+.pick-banner button { background: rgba(255,255,255,.2); color: #fff; border: 0; border-radius: 8px; padding: 8px 14px; font-size: 14px; cursor: pointer; }
+
+/* 月カレンダー */
+.calendar { background: var(--surface); padding: 6px 8px 8px; border-bottom: 1px solid var(--line); }
+.weekdays, .grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+.weekdays div { text-align: center; font-size: 13px; color: var(--muted); padding: 4px 0; }
+.weekdays div:first-child { color: var(--sun); }
+.weekdays div:last-child { color: var(--sat); }
+.day {
+  height: clamp(64px, 8.6vh, 96px); border-radius: 10px; border: 1px solid var(--line);
+  padding: 5px 6px; display: flex; flex-direction: column; gap: 3px; cursor: pointer;
+  background: var(--surface); transition: background .12s, border-color .12s;
+  user-select: none; -webkit-user-select: none;
+}
+.day.blank { visibility: hidden; }
+.day.today { background: var(--today); }
+.day.selected { border: 2px solid var(--accent); padding: 4px 5px; }
+.day.drop-target { background: var(--accent-soft); border: 2px dashed var(--accent); padding: 4px 5px; }
+.picking .day:not(.blank) { border-color: #b9c0ea; }
+.day .num { font-size: 15px; font-weight: 600; display: flex; justify-content: space-between; align-items: baseline; }
+.day .num .cnt { font-size: 11px; font-weight: 400; color: var(--muted); }
+.day.sun .num > span:first-child { color: var(--sun); }
+.day.sat .num > span:first-child { color: var(--sat); }
+.marks { display: flex; flex-wrap: wrap; gap: 3px; }
+.mark { font-size: 11px; line-height: 1; padding: 3px 5px; border-radius: 5px; white-space: nowrap; }
+.mark.absent { background: var(--absent-bg); color: var(--absent); }
+.mark.makeup { background: var(--makeup-bg); color: var(--makeup); }
+.mark.pending { background: var(--pending-bg); color: var(--pending); font-weight: 600; }
+.mark.moved { background: var(--moved-bg); color: var(--moved); }
+.mark.extra { background: var(--extra-bg); color: var(--extra); }
+
+/* 日の一覧 */
+.day-panel { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.day-head { padding: 12px 16px 8px; display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.day-head h2 { margin: 0; font-size: 19px; }
+.day-head .hint { font-size: 12px; color: var(--muted); }
+.list { flex: 1; overflow-y: auto; padding: 0 16px 16px; -webkit-overflow-scrolling: touch; }
+.row {
+  display: flex; align-items: center; gap: 12px; min-height: 56px; padding: 8px 12px; margin-bottom: 6px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 12px; cursor: grab;
+  user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; touch-action: pan-y;
+  border-left: 5px solid #cfcac3;
+}
+.row .time { font-size: 17px; font-weight: 600; width: 62px; font-variant-numeric: tabular-nums; display: flex; flex-direction: column; line-height: 1.2; }
+.row .time small { font-size: 12px; font-weight: 400; color: var(--muted); }
+.row .name { font-size: 17px; flex: 1; }
+.grade { font-size: 12px; color: var(--muted); margin-left: 8px; font-weight: 400; }
+.row .len { font-size: 11px; color: var(--muted); border: 1px solid var(--line); border-radius: 5px; padding: 2px 5px; }
+.row .chip { font-size: 12px; padding: 4px 8px; border-radius: 6px; white-space: nowrap; }
+.row.absent { background: var(--absent-bg); border-left-color: var(--absent); }
+.row.absent .name, .row.absent .time { color: var(--absent); text-decoration: line-through; }
+.row.absent .chip { background: #fff; color: var(--absent); border: 1px solid var(--line); }
+.row.absent.unresolved { border-left-color: var(--pending); }
+.row.absent.unresolved .chip { background: var(--pending-bg); color: var(--pending); border-color: transparent; font-weight: 600; }
+.row.makeup { background: var(--makeup-bg); border-left-color: var(--makeup); }
+.row.makeup .chip { background: #fff; color: var(--makeup); }
+.row.moved { background: var(--moved-bg); border-left-color: var(--moved); }
+.row.moved .chip { background: #fff; color: var(--moved); }
+.row.extra { background: var(--extra-bg); border-left-color: var(--extra); }
+.row.extra .chip { background: #fff; color: var(--extra); }
+.row.lifted { opacity: .35; }
+.row.tt { cursor: pointer; }
+.row.tt .chip { background: var(--accent-soft); color: var(--accent); }
+.empty { color: var(--muted); text-align: center; padding: 32px 16px; font-size: 15px; line-height: 1.7; }
+
+/* 振替未定・生徒別の一覧 */
+.view-head { padding: 16px 16px 8px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.view-head h2 { margin: 0 0 4px; font-size: 20px; }
+.view-head p { margin: 0; font-size: 13px; color: var(--muted); }
+.card {
+  display: flex; align-items: center; gap: 12px; background: var(--surface);
+  border: 1px solid var(--line); border-left: 5px solid var(--pending); border-radius: 12px;
+  padding: 12px 14px; margin-bottom: 8px;
+}
+.card.student { border-left-color: var(--accent); cursor: pointer; }
+.card .info { flex: 1; }
+.card .who { font-size: 18px; font-weight: 600; }
+.card .when { font-size: 14px; color: var(--muted); margin-top: 2px; }
+.card .age { font-size: 13px; color: var(--pending); font-weight: 600; white-space: nowrap; }
+.card .age.old { color: var(--sun); }
+.btn-primary {
+  background: var(--accent); color: #fff; border: 0; border-radius: 10px;
+  padding: 0 16px; height: 44px; font-size: 15px; cursor: pointer; white-space: nowrap;
+}
+.btn-sub {
+  background: var(--surface); color: var(--text); border: 1px solid var(--line); border-radius: 10px;
+  padding: 0 16px; height: 44px; font-size: 15px; cursor: pointer; white-space: nowrap;
+}
+.btn-sub.warn { color: var(--sun); }
+.group-head { font-size: 14px; color: var(--muted); font-weight: 600; margin: 14px 2px 6px; }
+.seg { display: flex; gap: 6px; }
+.seg button {
+  height: 40px; padding: 0 16px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface);
+  font-size: 15px; cursor: pointer; color: var(--text);
+}
+.seg button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+/* 設定 */
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin-bottom: 12px; }
+.panel h3 { margin: 0 0 6px; font-size: 17px; }
+.panel p { margin: 0 0 12px; font-size: 14px; color: var(--muted); line-height: 1.6; }
+.panel .btns { display: flex; flex-wrap: wrap; gap: 8px; }
+.panel .alert { color: var(--sun); font-weight: 600; }
+
+/* 下のタブ */
+.tabbar { display: flex; background: var(--surface); border-top: 1px solid var(--line); padding-bottom: env(safe-area-inset-bottom); }
+.tabbar button {
+  flex: 1; height: 58px; border: 0; background: none; font-size: 15px; color: var(--muted); cursor: pointer;
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+}
+.tabbar button.active { color: var(--accent); font-weight: 700; }
+.badge { background: var(--pending); color: #fff; border-radius: 999px; font-size: 12px; min-width: 22px; height: 22px; padding: 0 7px; display: inline-flex; align-items: center; justify-content: center; }
+
+/* ボトムシート */
+.overlay { position: fixed; inset: 0; background: rgba(30,25,20,.35); display: flex; align-items: flex-end; justify-content: center; z-index: 20; }
+.sheet {
+  width: 100%; max-width: 834px; background: var(--surface); border-radius: 18px 18px 0 0;
+  padding: 18px 18px calc(18px + env(safe-area-inset-bottom)); max-height: 85vh; overflow-y: auto;
+}
+.sheet h3 { margin: 0 0 4px; font-size: 19px; }
+.sheet .sub { margin: 0 0 14px; font-size: 14px; color: var(--muted); }
+.sheet .actions { display: flex; flex-direction: column; gap: 8px; }
+.sheet .actions button {
+  height: 52px; border-radius: 12px; border: 1px solid var(--line); background: var(--surface);
+  font-size: 16px; color: var(--text); cursor: pointer; text-align: left; padding: 0 16px;
+}
+.sheet .actions button.main { background: var(--accent); border-color: var(--accent); color: #fff; }
+.sheet .actions button.warn { color: var(--sun); }
+.sheet .actions button.close { text-align: center; color: var(--muted); }
+.sheet .error { color: var(--sun); font-size: 14px; margin: 0 0 10px; font-weight: 600; }
+.field { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+.field > span { width: 84px; flex: none; color: var(--muted); font-size: 14px; }
+.field input, .field select {
+  flex: 1; height: 46px; font-size: 16px; border: 1px solid var(--line); border-radius: 10px;
+  padding: 0 12px; background: var(--surface); color: var(--text); font-family: inherit; min-width: 0;
+}
+.field small { color: var(--muted); font-size: 12px; }
+.slot-list { margin-bottom: 12px; }
+.times { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; margin-bottom: 12px; }
+.times button {
+  height: 60px; border-radius: 12px; border: 1px solid var(--line); background: var(--surface);
+  font-size: 17px; font-weight: 600; cursor: pointer; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 2px; color: var(--text);
+}
+.times button small { font-size: 11px; font-weight: 400; color: var(--muted); }
+.times button.usual { border: 2px solid var(--accent); }
+.times button.usual small { color: var(--accent); }
+.times button:disabled { background: var(--absent-bg); color: #b8b2ab; cursor: default; }
+.times button:disabled small { color: #b8b2ab; }
+.len-toggle { display: flex; gap: 8px; margin-bottom: 12px; align-items: center; font-size: 14px; color: var(--muted); }
+
+/* ドラッグ中の影・トースト */
+.ghost {
+  position: fixed; z-index: 30; pointer-events: none; transform: translate(-50%, -120%);
+  background: var(--accent); color: #fff; padding: 10px 16px; border-radius: 12px; font-size: 16px;
+  box-shadow: 0 8px 20px rgba(0,0,0,.25); white-space: nowrap;
+}
+.toast {
+  position: fixed; left: 50%; bottom: calc(84px + env(safe-area-inset-bottom)); transform: translateX(-50%); z-index: 40;
+  background: #2b2826; color: #fff; border-radius: 12px; padding: 12px 16px; font-size: 15px;
+  display: flex; gap: 16px; align-items: center; box-shadow: 0 6px 18px rgba(0,0,0,.25); max-width: 92vw;
+}
+.toast button { background: none; border: 0; color: #ffd66b; font-size: 15px; font-weight: 700; cursor: pointer; white-space: nowrap; }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <div class="month-nav" id="monthNav">
+      <button class="nav-btn" id="prevMonth" aria-label="前の月">‹</button>
+      <h1 id="monthTitle"></h1>
+      <button class="nav-btn" id="nextMonth" aria-label="次の月">›</button>
+    </div>
+    <h1 id="viewTitle" hidden></h1>
+    <button class="nav-btn text" id="goToday">今日</button>
+  </header>
+
+  <main>
+    <section class="view" id="calView">
+      <div class="pick-banner" id="pickBanner" hidden>
+        <span id="pickText"></span>
+        <button id="pickCancel">やめる</button>
+      </div>
+      <div class="calendar">
+        <div class="weekdays"><div>日</div><div>月</div><div>火</div><div>水</div><div>木</div><div>金</div><div>土</div></div>
+        <div class="grid" id="grid"></div>
+      </div>
+      <div class="day-panel">
+        <div class="day-head">
+          <h2 id="dayTitle"></h2>
+          <span class="hint">長押しして上の日付へ動かすと振替 / タップでお休み・時間変更・追加</span>
+        </div>
+        <div class="list" id="dayList"></div>
+      </div>
+    </section>
+
+    <section class="view" id="pendView" hidden>
+      <div class="view-head">
+        <div>
+          <h2>振替先が未定のお休み</h2>
+          <p>決まったら「振替先を決める」から日付と時間を選びます</p>
+        </div>
+      </div>
+      <div class="list" id="pendList"></div>
+    </section>
+
+    <section class="view" id="ttView" hidden>
+      <div class="view-head">
+        <div class="seg" id="ttMode">
+          <button data-mode="dow" class="on">曜日別</button>
+          <button data-mode="student">生徒別</button>
+        </div>
+        <button class="btn-primary" id="addStudent">＋ 生徒を追加</button>
+      </div>
+      <div class="list" id="ttList"></div>
+    </section>
+
+    <section class="view" id="setView" hidden>
+      <div class="list" id="setList" style="padding-top:16px"></div>
+    </section>
+  </main>
+
+  <nav class="tabbar">
+    <button data-view="cal" class="active">カレンダー</button>
+    <button data-view="pend">振替未定 <span class="badge" id="badge"></span></button>
+    <button data-view="tt">時間割</button>
+    <button data-view="set">設定</button>
+  </nav>
+</div>
+
+<div class="overlay" id="overlay" hidden><div class="sheet" id="sheet"></div></div>
+<div class="toast" id="toast" hidden><span id="toastText"></span><button id="toastUndo">元に戻す</button></div>
+<input type="file" id="importFile" accept=".json,application/json" hidden>
+
+<script>
+// ---- 日付・時刻の道具 ----
+const WD = '日月火水木金土';
+const DOW_ORDER = [1, 2, 3, 4, 5, 6, 0];
+const pad = n => String(n).padStart(2, '0');
+const toKey = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+const parse = k => { const [y, m, d] = k.split('-').map(Number); return new Date(y, m - 1, d); };
+const fmt = k => { const d = parse(k); return `${d.getMonth() + 1}/${d.getDate()}(${WD[d.getDay()]})`; };
+const addDays = (k, n) => { const d = parse(k); d.setDate(d.getDate() + n); return toKey(d); };
+const today = () => toKey(new Date());
+const toMin = t => { const [h, m] = t.split(':').map(Number); return h * 60 + m; };
+const fromMin = n => `${pad(Math.floor(n / 60))}:${pad(n % 60)}`;
+const endOf = (t, len) => fromMin(toMin(t) + len);
+const timeRange = (from, to) => {
+  const out = [];
+  for (let n = toMin(from); n <= toMin(to); n += 30) out.push(fromMin(n));
+  return out;
+};
+// レッスンができる時間帯は全曜日 8:30〜21:00(開始は最も遅くて20:30)
+const pickableTimes = () => timeRange('08:30', '20:30');
+const DAY_END = toMin('21:00');
+const lenLabel = len => len === 60 ? '1時間' : '30分';
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+// 学年は「登録した年度の学年」を持ち、4月(新年度)ごとに1つずつ上げて表示する。大人で止まる
+const GRADES = ['未就学', '年少', '年中', '年長', '小1', '小2', '小3', '小4', '小5', '小6', '中1', '中2', '中3', '高1', '高2', '高3', '大1', '大2', '大3', '大4', '大人'];
+const schoolYear = k => { const d = parse(k); return d.getMonth() >= 3 ? d.getFullYear() : d.getFullYear() - 1; };
+const gradeIndex = (st, k = today()) => st.grade == null ? null : Math.min(st.grade + schoolYear(k) - st.gradeYear, GRADES.length - 1);
+const gradeOf = (st, k) => { const i = st ? gradeIndex(st, k) : null; return i == null ? '' : GRADES[i]; };
+const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+// ---- データ(この端末のブラウザ内に保存) ----
+// students: 生徒 / slots: いつもの枠(from〜untilの前日まで有効) / changes: その回だけの変更 / extras: 追加レッスン
+const STORE_KEY = 'pianoStudio.v1';
+const emptyDb = () => ({ version: 1, students: [], slots: [], changes: {}, extras: [], lastBackup: null });
+function load() {
+  try {
+    const s = localStorage.getItem(STORE_KEY);
+    if (s) return { ...emptyDb(), ...JSON.parse(s) };
+  } catch (e) { /* 読めなければ空で始める */ }
+  return emptyDb();
+}
+function save() {
+  try { localStorage.setItem(STORE_KEY, JSON.stringify(db)); }
+  catch (e) { showToast('保存できませんでした。設定からバックアップを書き出してください', false); }
+}
+let db = load();
+if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
+
+const studentById = id => db.students.find(s => s.id === id);
+const nameOf = id => (studentById(id) || { name: '(削除済み)' }).name;
+const gradeTag = id => { const g = gradeOf(studentById(id)); return g ? `<span class="grade">${g}</span>` : ''; };
+const byYomi = (a, b) => (a.yomi || '￿' + a.name).localeCompare(b.yomi || '￿' + b.name, 'ja');
+const slotById = id => db.slots.find(s => s.id === id);
+const extraById = id => db.extras.find(x => x.id === id);
+const activeOn = (s, k) => s.from <= k && (!s.until || k < s.until);
+const chKey = src => `${src.slotId}@${src.date}`;
+
+// ---- 状態 ----
+let viewMonth = (() => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), 1); })();
+let selected = today();
+let picking = null; // 日付を選んでいる作業(振替・追加レッスンの作成・追加レッスンの移動)
+let undoSnapshot = null;
+let ttMode = 'dow';
+let currentView = 'cal';
+
+// ---- 計算 ----
+function daySchedule(k) {
+  const dow = parse(k).getDay(), rows = [];
+  db.slots.filter(s => s.dow === dow && activeOn(s, k)).forEach(s => {
+    const c = db.changes[chKey({ slotId: s.id, date: k })];
+    if (c && c.makeup && c.makeup.date === k) return; // 時間変更は変更後の時間にだけ表示する
+    rows.push({ type: c ? 'absent' : 'regular', slot: s, studentId: s.studentId, name: nameOf(s.studentId), date: k, on: k, time: s.time, len: s.len, change: c });
+  });
+  Object.values(db.changes).forEach(c => {
+    if (!c.makeup || c.makeup.date !== k) return;
+    const s = slotById(c.slotId);
+    if (!s) return;
+    rows.push({ type: c.date === k ? 'moved' : 'makeup', slot: s, studentId: s.studentId, name: nameOf(s.studentId), date: c.date, on: k, time: c.makeup.time, len: s.len, change: c });
+  });
+  db.extras.filter(x => x.date === k).forEach(x =>
+    rows.push({ type: 'extra', extra: x, studentId: x.studentId, name: nameOf(x.studentId), date: k, on: k, time: x.time, len: x.len }));
+  return rows.sort((a, b) => a.time.localeCompare(b.time));
+}
+const unresolved = () => Object.values(db.changes).filter(c => !c.makeup && slotById(c.slotId)).sort((a, b) => a.date.localeCompare(b.date));
+const jobFor = r => r.type === 'extra' ? { kind: 'extraMove', extraId: r.extra.id } : { kind: 'move', src: { slotId: r.slot.id, date: r.date } };
+function jobInfo(job) {
+  if (job.kind === 'move') { const s = slotById(job.src.slotId); return { name: nameOf(s.studentId), len: s.len, label: `${fmt(job.src.date)} ${s.time} の分` }; }
+  if (job.kind === 'extra') return { name: nameOf(job.studentId), len: job.len, label: '追加レッスン' };
+  const x = extraById(job.extraId); return { name: nameOf(x.studentId), len: x.len, label: `追加レッスン(${fmt(x.date)} ${x.time})` };
+}
+// その日に埋まっている時間帯。job を渡すと、動かす本人の枠は空きとみなす
+function busyIntervals(k, job) {
+  return daySchedule(k).filter(r => {
+    if (r.type === 'absent') return false;
+    if (job && job.kind === 'move' && r.slot && r.slot.id === job.src.slotId && r.date === job.src.date) return false;
+    if (job && job.kind === 'extraMove' && r.extra && r.extra.id === job.extraId) return false;
+    return true;
+  }).map(r => ({ from: toMin(r.time), to: toMin(r.time) + r.len, name: r.name }));
+}
+const canFit = (t, len, busy) => {
+  const st = toMin(t), en = st + len;
+  return en <= DAY_END && !busy.some(b => b.from < en && b.to > st);
+};
+// いつもの枠どうしの重なり(from 以降に有効な枠が対象)
+function slotConflict(v, excludeId) {
+  const st = toMin(v.time), en = st + v.len;
+  const hit = db.slots.find(s => s.id !== excludeId && s.dow === v.dow && (!s.until || s.until > v.from)
+    && toMin(s.time) < en && toMin(s.time) + s.len > st);
+  return hit ? `${WD[hit.dow]}曜 ${hit.time} の${nameOf(hit.studentId)}さんの枠と重なっています` : null;
+}
+
+// ---- 描画 ----
+const $ = id => document.getElementById(id);
+
+function renderCalendar() {
+  $('monthTitle').textContent = `${viewMonth.getFullYear()}年${viewMonth.getMonth() + 1}月`;
+  const grid = $('grid'); grid.innerHTML = '';
+  const first = viewMonth.getDay();
+  const days = new Date(viewMonth.getFullYear(), viewMonth.getMonth() + 1, 0).getDate();
+  const cells = Math.ceil((first + days) / 7) * 7;
+  const t = today();
+  for (let i = 0; i < cells; i++) {
+    const el = document.createElement('div');
+    const n = i - first + 1;
+    if (n < 1 || n > days) { el.className = 'day blank'; grid.appendChild(el); continue; }
+    const d = new Date(viewMonth.getFullYear(), viewMonth.getMonth(), n), k = toKey(d);
+    const rows = daySchedule(k);
+    const count = type => rows.filter(r => r.type === type).length;
+    const lessons = rows.filter(r => r.type !== 'absent').length;
+    const pend = rows.filter(r => r.type === 'absent' && !r.change.makeup).length;
+    const absent = count('absent') - pend;
+    const marks = [['pending', '未定', pend], ['absent', '休', absent], ['makeup', '振', count('makeup')], ['moved', '変', count('moved')], ['extra', '追', count('extra')]];
+    el.className = 'day' + (d.getDay() === 0 ? ' sun' : '') + (d.getDay() === 6 ? ' sat' : '')
+      + (k === t ? ' today' : '') + (k === selected ? ' selected' : '');
+    el.dataset.date = k;
+    el.innerHTML = `<div class="num"><span>${n}</span>${lessons ? `<span class="cnt">${lessons}コマ</span>` : ''}</div>
+      <div class="marks">${marks.filter(m => m[2]).map(([cls, label, c]) => `<span class="mark ${cls}">${label}${c}</span>`).join('')}</div>`;
+    el.addEventListener('click', () => onDayTap(k));
+    grid.appendChild(el);
+  }
+  $('calView').classList.toggle('picking', !!picking);
+  $('pickBanner').hidden = !picking;
+  if (picking) {
+    const info = jobInfo(picking);
+    $('pickText').textContent = picking.kind === 'extra'
+      ? `${info.name}さんの追加レッスンの日をタップ`
+      : `${info.name}さん(${info.label})を移す日をタップ`;
+  }
+}
+
+function renderDay() {
+  const rows = daySchedule(selected);
+  const lessons = rows.filter(r => r.type !== 'absent').length;
+  $('dayTitle').textContent = `${fmt(selected)}  ${lessons}コマ`;
+  const list = $('dayList'); list.innerHTML = '';
+  if (!db.slots.length) {
+    list.innerHTML = '<div class="empty">まだ時間割がありません。<br>「時間割」タブで生徒を登録するか、「設定」タブで架空データを入れてください。</div>';
+    return;
+  }
+  if (!rows.length) { list.innerHTML = '<div class="empty">この日のレッスンはありません</div>'; return; }
+  rows.forEach(r => {
+    const el = document.createElement('div');
+    let chip = '';
+    if (r.type === 'absent') chip = r.change.makeup ? `お休み → ${fmt(r.change.makeup.date)} ${r.change.makeup.time}` : '振替先未定';
+    if (r.type === 'makeup') chip = `振替(${fmt(r.date)}の分)`;
+    if (r.type === 'moved') chip = `時間変更 ${r.slot.time}→${r.time}`;
+    if (r.type === 'extra') chip = '追加レッスン';
+    el.className = `row ${r.type}` + (r.type === 'absent' && !r.change.makeup ? ' unresolved' : '');
+    el.innerHTML = `<span class="time">${r.time}<small>〜${endOf(r.time, r.len)}</small></span><span class="name">${esc(r.name)}${gradeTag(r.studentId)}</span>`
+      + (r.len === 60 ? '<span class="len">1時間</span>' : '') + (chip ? `<span class="chip">${chip}</span>` : '');
+    attachPress(el, r);
+    list.appendChild(el);
+  });
+}
+
+function renderPending() {
+  const items = unresolved();
+  $('badge').textContent = items.length; $('badge').hidden = !items.length;
+  const list = $('pendList'); list.innerHTML = '';
+  if (!items.length) { list.innerHTML = '<div class="empty">未定のお休みはありません</div>'; return; }
+  const t = parse(today());
+  items.forEach(c => {
+    const s = slotById(c.slotId);
+    const age = Math.round((t - parse(c.date)) / 86400000);
+    const ageText = age > 0 ? `${age}日経過` : age === 0 ? '今日' : `${-age}日後`;
+    const el = document.createElement('div');
+    el.className = 'card';
+    el.innerHTML = `<div class="info"><div class="who">${esc(nameOf(s.studentId))}</div><div class="when">${fmt(c.date)} ${s.time} のお休み</div></div>
+      <span class="age${age >= 7 ? ' old' : ''}">${ageText}</span><button class="btn-primary">振替先を決める</button>`;
+    el.querySelector('button').addEventListener('click', () => startPicking({ kind: 'move', src: { slotId: c.slotId, date: c.date } }));
+    list.appendChild(el);
+  });
+}
+
+// 時間割: 今日有効な枠と、これから始まる枠を表示する
+function visibleSlots() {
+  const t = today();
+  return db.slots.filter(s => activeOn(s, t) || s.from > t).sort((a, b) => a.time.localeCompare(b.time) || a.from.localeCompare(b.from));
+}
+function slotNote(s) {
+  const t = today(), notes = [];
+  if (s.from > t) notes.push(`${fmt(s.from)}から`);
+  if (s.until) notes.push(`${fmt(addDays(s.until, -1))}まで`);
+  return notes.join(' ');
+}
+function renderTimetable() {
+  $('ttMode').querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.mode === ttMode));
+  const list = $('ttList'); list.innerHTML = '';
+  const slots = visibleSlots();
+  if (!db.students.length) {
+    list.innerHTML = '<div class="empty">まだ生徒が登録されていません。<br>右上の「＋ 生徒を追加」から登録します。</div>';
+    return;
+  }
+  if (ttMode === 'dow') {
+    DOW_ORDER.forEach(dow => {
+      const ss = slots.filter(s => s.dow === dow);
+      const head = document.createElement('div');
+      head.className = 'group-head';
+      head.textContent = `${WD[dow]}曜日  ${ss.filter(s => activeOn(s, today())).length}コマ`;
+      list.appendChild(head);
+      ss.forEach(s => {
+        const el = document.createElement('div');
+        const note = slotNote(s);
+        el.className = 'row tt';
+        el.innerHTML = `<span class="time">${s.time}<small>〜${endOf(s.time, s.len)}</small></span><span class="name">${esc(nameOf(s.studentId))}${gradeTag(s.studentId)}</span>`
+          + (s.len === 60 ? '<span class="len">1時間</span>' : '') + (note ? `<span class="chip">${note}</span>` : '');
+        el.addEventListener('click', () => openSlotSheet(s));
+        list.appendChild(el);
+      });
+    });
+    return;
+  }
+  [...db.students].sort(byYomi).forEach(st => {
+    const ss = slots.filter(s => s.studentId === st.id).sort((a, b) => DOW_ORDER.indexOf(a.dow) - DOW_ORDER.indexOf(b.dow) || a.time.localeCompare(b.time));
+    const el = document.createElement('div');
+    el.className = 'card student';
+    const summary = ss.length
+      ? ss.map(s => `${WD[s.dow]} ${s.time}` + (s.len === 60 ? '(1時間)' : '') + (slotNote(s) ? `[${slotNote(s)}]` : '')).join('・')
+      : 'いつもの枠なし';
+    el.innerHTML = `<div class="info"><div class="who">${esc(st.name)}${gradeTag(st.id)}</div><div class="when">${st.yomi ? esc(st.yomi) + ' / ' : ''}${summary}</div></div>`;
+    el.addEventListener('click', () => openStudentSheet(st));
+    list.appendChild(el);
+  });
+}
+
+function renderSettings() {
+  const t = today();
+  const days = db.lastBackup ? Math.round((parse(t) - parse(db.lastBackup)) / 86400000) : null;
+  const backupText = db.lastBackup ? `最後の書き出し: ${fmt(db.lastBackup)}(${days === 0 ? '今日' : days + '日前'})` : 'まだ書き出していません';
+  const needBackup = db.slots.length && (days === null || days >= 14);
+  $('setList').innerHTML = `
+    <div class="panel">
+      <h3>データの状況</h3>
+      <p>生徒 ${db.students.length}名 / いつもの枠 ${db.slots.filter(s => activeOn(s, t)).length}コマ(今日時点)/ お休み・振替の記録 ${Object.keys(db.changes).length}件 / 追加レッスン ${db.extras.length}件<br>
+      データはこのiPadのブラウザの中にだけ保存されています。</p>
+    </div>
+    <div class="panel">
+      <h3>バックアップ</h3>
+      <p class="${needBackup ? 'alert' : ''}">${backupText}${needBackup ? ' — 書き出しをおすすめします' : ''}</p>
+      <p>書き出したファイルは「ファイル」アプリなどに保存してください。iPadを替えたときやデータが消えたときに、そのファイルから読み込んで元に戻せます。</p>
+      <div class="btns"><button class="btn-primary" id="doExport">バックアップを書き出す</button><button class="btn-sub" id="doImport">ファイルから読み込む</button></div>
+    </div>
+    <div class="panel">
+      <h3>試作用</h3>
+      <p>架空の生徒38名・週38コマと、お休みや振替の例を入れます。今のデータは置き換わります。</p>
+      <div class="btns"><button class="btn-sub" id="doSample">架空データを入れる</button><button class="btn-sub warn" id="doClear">すべて消す</button></div>
+    </div>`;
+  $('doExport').addEventListener('click', exportBackup);
+  $('doImport').addEventListener('click', () => $('importFile').click());
+  $('doSample').addEventListener('click', () => {
+    if (!confirm('架空データを入れます。今のデータは置き換わります。よろしいですか?')) return;
+    record(fillSample, '架空データを入れました');
+  });
+  $('doClear').addEventListener('click', () => {
+    if (!confirm('すべてのデータを消します。よろしいですか?')) return;
+    record(() => { db = { ...emptyDb(), lastBackup: db.lastBackup }; }, 'すべてのデータを消しました');
+  });
+}
+
+function render() {
+  renderCalendar(); renderDay(); renderPending(); renderTimetable(); renderSettings();
+}
+
+// ---- 記録 ----
+function record(fn, message) {
+  undoSnapshot = JSON.stringify(db);
+  fn(); save(); render(); showToast(message);
+}
+function setMakeup(src, date, time) {
+  const s = slotById(src.slotId), name = nameOf(s.studentId);
+  if (date === src.date && time === s.time) { record(() => delete db.changes[chKey(src)], `${name}さん: いつもの予定に戻しました`); return; }
+  const msg = date === src.date ? `${name}さん: ${fmt(date)} の時間を ${s.time} → ${time} に変更` : `${name}さん: ${fmt(src.date)} → ${fmt(date)} ${time} に振替`;
+  record(() => { db.changes[chKey(src)] = { ...src, makeup: { date, time } }; }, msg);
+}
+function setUnresolved(src) {
+  record(() => { db.changes[chKey(src)] = { ...src, makeup: null }; }, `${nameOf(slotById(src.slotId).studentId)}さん: お休み(振替先未定)を記録`);
+}
+function clearChange(src) {
+  record(() => delete db.changes[chKey(src)], `${nameOf(slotById(src.slotId).studentId)}さん: いつもの予定に戻しました`);
+}
+function applyJob(job, date, time, len) {
+  if (job.kind === 'move') { setMakeup(job.src, date, time); return; }
+  if (job.kind === 'extra') {
+    record(() => db.extras.push({ id: uid(), studentId: job.studentId, date, time, len }), `${nameOf(job.studentId)}さん: ${fmt(date)} ${time} に追加レッスンを作成`);
+    return;
+  }
+  const x = extraById(job.extraId);
+  record(() => Object.assign(x, { date, time, len }), `${nameOf(x.studentId)}さん: 追加レッスンを ${fmt(date)} ${time} に変更`);
+}
+
+// ---- カレンダーの操作 ----
+function onDayTap(k) {
+  if (picking) { openTimeSheet(k, picking); return; }
+  selected = k; renderCalendar(); renderDay();
+}
+function startPicking(job) {
+  picking = job; closeSheet(); showView('cal'); renderCalendar();
+}
+function stopPicking() { picking = null; renderCalendar(); }
+
+// レッスンをタップしたときのメニュー
+function openRowSheet(r) {
+  const job = jobFor(r);
+  const src = job.src;
+  const sameDay = ['この日のまま時間を変える', '', () => openTimeSheet(r.on, job)];
+  const duplicate = ['追加レッスンを作る(複製)', '', () => startPicking({ kind: 'extra', studentId: r.studentId, len: r.len })];
+  let sub, buttons;
+  if (r.type === 'regular') {
+    sub = `${fmt(r.date)} ${r.time}〜${endOf(r.time, r.len)}(いつもの枠)`;
+    buttons = [['別の日に振替える', 'main', () => startPicking(job)], sameDay,
+      ['お休みにする(振替先は未定)', '', () => { closeSheet(); setUnresolved(src); }], duplicate];
+  } else if (r.type === 'absent') {
+    sub = `${fmt(r.date)} ${r.time} のお休み` + (r.change.makeup ? ` → ${fmt(r.change.makeup.date)} ${r.change.makeup.time} に振替済み` : '(振替先未定)');
+    buttons = [[r.change.makeup ? '振替先を変える' : '振替先を選ぶ', 'main', () => startPicking(job)]];
+    if (r.change.makeup) buttons.push(['振替先を未定に戻す', '', () => { closeSheet(); setUnresolved(src); }]);
+    buttons.push(['お休みを取り消す(いつも通り来る)', 'warn', () => { closeSheet(); clearChange(src); }]);
+  } else if (r.type === 'extra') {
+    sub = `${fmt(r.on)} ${r.time}〜${endOf(r.time, r.len)} の追加レッスン`;
+    buttons = [sameDay, ['別の日に移す', '', () => startPicking(job)],
+      ['追加レッスンを取り消す', 'warn', () => { closeSheet(); record(() => { db.extras = db.extras.filter(x => x.id !== r.extra.id); }, `${r.name}さん: 追加レッスンを取り消しました`); }]];
+  } else {
+    sub = r.type === 'moved'
+      ? `${fmt(r.date)} の時間変更(${r.slot.time} → ${r.time})`
+      : `${fmt(r.date)} ${r.slot.time} の分の振替(${fmt(r.on)} ${r.time})`;
+    buttons = [sameDay, ['別の日に振替える', '', () => startPicking(job)],
+      ['お休みにする(振替先は未定)', '', () => { closeSheet(); setUnresolved(src); }],
+      ['いつもの予定に戻す', 'warn', () => { closeSheet(); clearChange(src); }], duplicate];
+  }
+  openActions(`${esc(r.name)}さん`, sub, buttons);
+}
+
+// 時間を選ぶ。lenOverride は追加レッスンの長さ切り替え用
+function openTimeSheet(k, job, lenOverride) {
+  const info = jobInfo(job);
+  const len = lenOverride || info.len;
+  const usual = job.kind === 'move' ? slotById(job.src.slotId).time : null;
+  const busy = busyIntervals(k, job);
+  const html = pickableTimes().map(t => {
+    const st = toMin(t);
+    const inside = busy.find(b => st >= b.from && st < b.to);
+    if (inside) return `<button disabled>${t}<small>${esc(inside.name.split(/\s/)[0])}さん</small></button>`;
+    if (!canFit(t, len, busy)) return `<button disabled>${t}<small>1時間は入らない</small></button>`;
+    return `<button data-t="${t}" class="${t === usual ? 'usual' : ''}">${t}<small>${t === usual ? 'いつもの時間' : '空き'}</small></button>`;
+  }).join('');
+  const lenToggle = job.kind === 'move' ? '' :
+    `<div class="len-toggle">長さ <div class="seg"><button data-len="30" class="${len === 30 ? 'on' : ''}">30分</button><button data-len="60" class="${len === 60 ? 'on' : ''}">1時間</button></div></div>`;
+  const sameDay = job.kind === 'move' && k === job.src.date;
+  openSheet(sameDay ? `${fmt(k)} の時間を変える` : `${fmt(k)} の何時にしますか?`,
+    `${esc(info.name)}さん(${info.label}・${lenLabel(len)})`,
+    `${lenToggle}<div class="times">${html}</div><div class="actions"><button class="close">やめる</button></div>`);
+  $('sheet').querySelectorAll('.times button[data-t]').forEach(b => b.addEventListener('click', () => {
+    closeSheet(); picking = null; selected = k; applyJob(job, k, b.dataset.t, len);
+  }));
+  $('sheet').querySelectorAll('.len-toggle button').forEach(b => b.addEventListener('click', () => openTimeSheet(k, job, Number(b.dataset.len))));
+  $('sheet').querySelector('.close').addEventListener('click', closeSheet);
+}
+
+// ---- 時間割の操作 ----
+function slotFields(v) {
+  return `
+    <label class="field"><span>曜日</span><select name="dow">${DOW_ORDER.map(d => `<option value="${d}"${d === v.dow ? ' selected' : ''}>${WD[d]}曜日</option>`).join('')}</select></label>
+    <label class="field"><span>開始時刻</span><select name="time">${pickableTimes().map(t => `<option${t === v.time ? ' selected' : ''}>${t}</option>`).join('')}</select></label>
+    <div class="field"><span>長さ</span><div class="seg" data-name="len"><button type="button" data-v="30" class="${v.len === 30 ? 'on' : ''}">30分</button><button type="button" data-v="60" class="${v.len === 60 ? 'on' : ''}">1時間</button></div></div>
+    <label class="field"><span>いつから</span><input type="date" name="from" value="${v.from}"></label>`;
+}
+function readSlotFields() {
+  const sh = $('sheet');
+  return {
+    dow: Number(sh.querySelector('[name=dow]').value),
+    time: sh.querySelector('[name=time]').value,
+    len: Number(sh.querySelector('[data-name=len] .on').dataset.v),
+    from: sh.querySelector('[name=from]').value || today(),
+  };
+}
+function bindSeg() {
+  $('sheet').querySelectorAll('.seg[data-name] button').forEach(b => b.addEventListener('click', () => {
+    b.parentElement.querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
+  }));
+}
+function showSheetError(msg) {
+  let el = $('sheet').querySelector('.error');
+  if (!el) { el = document.createElement('p'); el.className = 'error'; $('sheet').querySelector('.sub').after(el); }
+  el.textContent = msg;
+}
+const defaultSlot = () => ({ dow: 1, time: '15:00', len: 30, from: today() });
+function studentFields(st) {
+  const g = st ? gradeIndex(st) : null;
+  return `
+    <label class="field"><span>名前</span><input name="name" value="${st ? esc(st.name) : ''}" placeholder="例: 山田 はな" autocomplete="off"></label>
+    <label class="field"><span>よみがな</span><input name="yomi" value="${st && st.yomi ? esc(st.yomi) : ''}" placeholder="例: やまだ はな" autocomplete="off"></label>
+    <label class="field"><span>学年</span><select name="grade"><option value="">未設定</option>${GRADES.map((label, i) => `<option value="${i}"${i === g ? ' selected' : ''}>${label}</option>`).join('')}</select></label>
+    <p class="sub">学年は毎年4月に自動で1つ上がります(大人で止まります)。</p>`;
+}
+// 学年は「今年度の学年」として保存する
+function readStudentFields() {
+  const sh = $('sheet'), g = sh.querySelector('[name=grade]').value;
+  return {
+    name: sh.querySelector('[name=name]').value.trim(),
+    yomi: sh.querySelector('[name=yomi]').value.trim(),
+    grade: g === '' ? null : Number(g),
+    gradeYear: schoolYear(today()),
+  };
+}
+
+function openAddStudentSheet() {
+  openSheet('生徒を追加', '名前と、いつもの枠を入力します',
+    `${studentFields(null)}${slotFields(defaultSlot())}
+    <div class="actions"><button class="main" id="saveBtn">登録する</button><button class="close">やめる</button></div>`);
+  bindSeg();
+  $('saveBtn').addEventListener('click', () => {
+    const info = readStudentFields(), name = info.name;
+    if (!name) { showSheetError('名前を入力してください'); return; }
+    const v = readSlotFields();
+    const conflict = slotConflict(v, null);
+    if (conflict) { showSheetError(conflict); return; }
+    closeSheet();
+    record(() => {
+      const st = { id: uid(), ...info };
+      db.students.push(st);
+      db.slots.push({ id: uid(), studentId: st.id, ...v, until: null });
+    }, `${name}さんを登録しました(${WD[v.dow]}曜 ${v.time}・${fmt(v.from)}から)`);
+  });
+  $('sheet').querySelector('.close').addEventListener('click', closeSheet);
+}
+
+function openStudentSheet(st) {
+  const ss = visibleSlots().filter(s => s.studentId === st.id);
+  const slotRows = ss.map(s => `<div class="row tt" data-id="${s.id}"><span class="time">${WD[s.dow]} ${s.time}<small>〜${endOf(s.time, s.len)}</small></span><span class="name">${lenLabel(s.len)}</span>${slotNote(s) ? `<span class="chip">${slotNote(s)}</span>` : ''}</div>`).join('');
+  openSheet(`${esc(st.name)}さん`, 'いつもの枠をタップすると変更・終了できます',
+    `${studentFields(st)}<div class="actions" style="margin-bottom:16px"><button id="renameBtn">名前・よみがな・学年を保存</button></div>
+    <div class="slot-list">${slotRows || '<div class="empty">いつもの枠はありません</div>'}</div>
+    <div class="actions"><button class="main" id="addSlotBtn">＋ いつもの枠を追加</button><button class="warn" id="delStudentBtn">この生徒を削除する(記録もすべて消えます)</button><button class="close">閉じる</button></div>`);
+  $('sheet').querySelectorAll('.slot-list .row').forEach(el => el.addEventListener('click', () => openSlotSheet(slotById(el.dataset.id))));
+  $('renameBtn').addEventListener('click', () => {
+    const info = readStudentFields();
+    if (!info.name) { showSheetError('名前を入力してください'); return; }
+    closeSheet();
+    record(() => Object.assign(studentById(st.id), info), `${info.name}さんの情報を保存しました`);
+  });
+  $('addSlotBtn').addEventListener('click', () => openNewSlotSheet(st));
+  $('delStudentBtn').addEventListener('click', () => {
+    if (!confirm(`${st.name}さんを削除します。いつもの枠・お休み・振替・追加レッスンの記録もすべて消えます。\n(やめる場合は、いつもの枠を「この日でやめる」にしてください)\nよろしいですか?`)) return;
+    closeSheet();
+    record(() => {
+      const ids = new Set(db.slots.filter(s => s.studentId === st.id).map(s => s.id));
+      db.students = db.students.filter(s => s.id !== st.id);
+      db.slots = db.slots.filter(s => !ids.has(s.id));
+      Object.keys(db.changes).forEach(k => { if (ids.has(db.changes[k].slotId)) delete db.changes[k]; });
+      db.extras = db.extras.filter(x => x.studentId !== st.id);
+    }, `${st.name}さんを削除しました`);
+  });
+  $('sheet').querySelector('.close').addEventListener('click', closeSheet);
+}
+
+function openNewSlotSheet(st) {
+  openSheet(`${esc(st.name)}さんの枠を追加`, '週に2回来る生徒さんなどに使います',
+    `${slotFields(defaultSlot())}<div class="actions"><button class="main" id="saveBtn">追加する</button><button class="close">やめる</button></div>`);
+  bindSeg();
+  $('saveBtn').addEventListener('click', () => {
+    const v = readSlotFields();
+    const conflict = slotConflict(v, null);
+    if (conflict) { showSheetError(conflict); return; }
+    closeSheet();
+    record(() => db.slots.push({ id: uid(), studentId: st.id, ...v, until: null }), `${st.name}さん: ${WD[v.dow]}曜 ${v.time} の枠を追加(${fmt(v.from)}から)`);
+  });
+  $('sheet').querySelector('.close').addEventListener('click', closeSheet);
+}
+
+// 変更する日以降の、この枠のお休み・振替の記録
+const changesFrom = (slot, k) => Object.values(db.changes).filter(c => c.slotId === slot.id && c.date >= k);
+
+function openSlotSheet(slot) {
+  const name = nameOf(slot.studentId);
+  openSheet(`${esc(name)}さんのいつもの枠`, `今: ${WD[slot.dow]}曜 ${slot.time}〜${endOf(slot.time, slot.len)}` + (slotNote(slot) ? `(${slotNote(slot)})` : ''),
+    `${slotFields({ ...slot, from: slot.from > today() ? slot.from : today() })}
+    <p class="sub">「いつから」より前の日の予定や記録はそのまま残ります。</p>
+    <div class="actions"><button class="main" id="saveBtn">この内容に変える</button><button class="warn" id="endBtn">「いつから」の日でこの枠をやめる(退会など)</button><button class="close">やめる</button></div>`);
+  bindSeg();
+  $('saveBtn').addEventListener('click', () => {
+    const v = readSlotFields();
+    if (v.dow === slot.dow && v.time === slot.time && v.len === slot.len) { showSheetError('曜日・時刻・長さが今と同じです'); return; }
+    const conflict = slotConflict(v, slot.id);
+    if (conflict) { showSheetError(conflict); return; }
+    const affected = changesFrom(slot, v.from);
+    if (affected.length && !confirm(`${fmt(v.from)}以降にこの枠のお休み・振替の記録が${affected.length}件あります。枠を変えると消えます。よろしいですか?`)) return;
+    closeSheet();
+    record(() => {
+      affected.forEach(c => delete db.changes[chKey(c)]);
+      const target = slotById(slot.id);
+      if (v.from <= target.from) Object.assign(target, { dow: v.dow, time: v.time, len: v.len, from: v.from });
+      else {
+        db.slots.push({ id: uid(), studentId: target.studentId, dow: v.dow, time: v.time, len: v.len, from: v.from, until: target.until });
+        target.until = v.from;
+      }
+    }, `${name}さん: ${fmt(v.from)}から ${WD[v.dow]}曜 ${v.time}(${lenLabel(v.len)})に変更`);
+  });
+  $('endBtn').addEventListener('click', () => {
+    const k = readSlotFields().from;
+    const affected = changesFrom(slot, k);
+    if (!confirm(`${name}さんの ${WD[slot.dow]}曜 ${slot.time} の枠を、${fmt(k)}からなくします。` + (affected.length ? `\nこの日以降のお休み・振替の記録${affected.length}件も消えます。` : '') + '\nよろしいですか?')) return;
+    closeSheet();
+    record(() => {
+      const target = slotById(slot.id);
+      if (k <= target.from) {
+        db.slots = db.slots.filter(s => s.id !== slot.id);
+        Object.keys(db.changes).forEach(key => { if (db.changes[key].slotId === slot.id) delete db.changes[key]; });
+      } else {
+        affected.forEach(c => delete db.changes[chKey(c)]);
+        target.until = k;
+      }
+    }, `${name}さん: ${WD[slot.dow]}曜 ${slot.time} の枠を ${fmt(k)}からなくしました`);
+  });
+  $('sheet').querySelector('.close').addEventListener('click', closeSheet);
+}
+
+// ---- バックアップ ----
+async function exportBackup() {
+  const name = `piano-backup-${today().replace(/-/g, '')}.json`;
+  const json = JSON.stringify({ ...db, exportedAt: new Date().toISOString() });
+  const file = new File([json], name, { type: 'application/json' });
+  const touch = navigator.maxTouchPoints > 0;
+  try {
+    if (touch && navigator.canShare && navigator.canShare({ files: [file] })) {
+      await navigator.share({ files: [file], title: name });
+    } else {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(file); a.download = name;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    }
+  } catch (e) {
+    if (e.name === 'AbortError') return; // 共有シートを閉じただけ
+    showToast('書き出しに失敗しました', false);
+    return;
+  }
+  db.lastBackup = today(); save(); renderSettings();
+  showToast(`${name} を書き出しました`, false);
+}
+$('importFile').addEventListener('change', async e => {
+  const f = e.target.files[0];
+  e.target.value = '';
+  if (!f) return;
+  let data;
+  try { data = JSON.parse(await f.text()); } catch (err) { showToast('ファイルを読めませんでした', false); return; }
+  if (!Array.isArray(data.students) || !Array.isArray(data.slots)) { showToast('このツールのバックアップファイルではないようです', false); return; }
+  const when = data.exportedAt ? new Date(data.exportedAt).toLocaleString('ja-JP') : '不明';
+  if (!confirm(`バックアップ(書き出し日時: ${when}、生徒${data.students.length}名)を読み込みます。今のデータは置き換わります。よろしいですか?`)) return;
+  record(() => { const { exportedAt, ...rest } = data; db = { ...emptyDb(), ...rest }; }, 'バックアップから読み込みました');
+});
+
+// ---- 架空データ ----
+const NAMES = ['青木 ゆい','石田 はると','上野 さくら','遠藤 そうた','大西 りこ','岡本 ゆうま','加藤 みお','川口 ひなた',
+  '木村 あかり','久保 れん','小林 ことね','斉藤 いつき','佐野 めい','島田 こうき','杉山 ゆな','高木 たくみ',
+  '田村 ほのか','千葉 けいた','土屋 りん','中川 あおい','西村 しょう','野口 まな','橋本 だいち','平野 ちひろ',
+  '福田 かいと','藤井 すず','前田 りく','松本 ひより','三浦 ゆうと','村上 あんな','森 こはる','山口 なつき',
+  '山本 えま','吉田 しおん','和田 つむぎ','今井 りょう','内田 ねね','小川 はる'];
+const SURNAME_YOMI = { 青木: 'あおき', 石田: 'いしだ', 上野: 'うえの', 遠藤: 'えんどう', 大西: 'おおにし', 岡本: 'おかもと', 加藤: 'かとう',
+  川口: 'かわぐち', 木村: 'きむら', 久保: 'くぼ', 小林: 'こばやし', 斉藤: 'さいとう', 佐野: 'さの', 島田: 'しまだ', 杉山: 'すぎやま',
+  高木: 'たかぎ', 田村: 'たむら', 千葉: 'ちば', 土屋: 'つちや', 中川: 'なかがわ', 西村: 'にしむら', 野口: 'のぐち', 橋本: 'はしもと',
+  平野: 'ひらの', 福田: 'ふくだ', 藤井: 'ふじい', 前田: 'まえだ', 松本: 'まつもと', 三浦: 'みうら', 村上: 'むらかみ', 森: 'もり',
+  山口: 'やまぐち', 山本: 'やまもと', 吉田: 'よしだ', 和田: 'わだ', 今井: 'いまい', 内田: 'うちだ', 小川: 'おがわ' };
+const sampleYomi = name => { const [sur, given] = name.split(' '); return `${SURNAME_YOMI[sur]} ${given}`; };
+const SAMPLE_SLOTS = {
+  0: [['10:00', 30], ['10:30', 60]],
+  1: [['15:00', 30], ['15:30', 30], ['16:00', 60], ['17:00', 30], ['17:30', 30], ['18:00', 30]],
+  2: [['15:00', 30], ['15:30', 30], ['16:00', 30], ['16:30', 30], ['17:00', 60], ['18:00', 30], ['18:30', 30]],
+  3: [['15:00', 30], ['15:30', 30], ['16:00', 30], ['16:30', 30], ['17:00', 30], ['17:30', 30], ['18:00', 30]],
+  4: [['15:00', 30], ['15:30', 30], ['16:00', 30], ['16:30', 60], ['17:30', 30], ['18:00', 30], ['18:30', 30]],
+  5: [['15:30', 30], ['16:00', 30], ['16:30', 30], ['17:00', 30], ['17:30', 60], ['18:30', 30]],
+  6: [['10:00', 30], ['10:30', 30], ['11:00', 60]],
+};
+// 今日の前後に、お休み・振替・時間変更・追加レッスンの例を作る
+function fillSample() {
+  db = { ...emptyDb(), lastBackup: db.lastBackup };
+  const now = new Date();
+  const from = toKey(new Date(now.getFullYear(), now.getMonth() - 1, 1));
+  let i = 0;
+  Object.entries(SAMPLE_SLOTS).forEach(([dow, defs]) => defs.forEach(([t, len]) => {
+    // 学年は年長〜高3と大人に散らす
+    const grade = [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 20][(i * 5) % 13];
+    const st = { id: 'st' + i, name: NAMES[i], yomi: sampleYomi(NAMES[i]), grade, gradeYear: schoolYear(toKey(now)) };
+    db.students.push(st);
+    db.slots.push({ id: 'sl' + i, studentId: st.id, dow: Number(dow), time: t, len, from, until: null });
+    i++;
+  }));
+  const t = today();
+  const lessonOn = (k, n) => { const rows = daySchedule(k).filter(r => r.type === 'regular'); return rows.length ? rows[n % rows.length] : null; };
+  const freeTime = (k, len, job) => {
+    const pref = [0, 6].includes(parse(k).getDay()) ? '09:30' : '14:30';
+    const busy = busyIntervals(k, job);
+    return pickableTimes().find(tm => tm >= pref && canFit(tm, len, busy));
+  };
+  const mark = (r, makeup) => { db.changes[chKey({ slotId: r.slot.id, date: r.date })] = { slotId: r.slot.id, date: r.date, makeup }; };
+  [-9, -2, 0].forEach((o, j) => { const r = lessonOn(addDays(t, o), j + 1); if (r) mark(r, null); });
+  [-6, -1, 2].forEach((o, j) => {
+    const r = lessonOn(addDays(t, o), j + 3);
+    if (!r) return;
+    const to = addDays(r.date, 2 + j), tm = freeTime(to, r.len);
+    if (tm) mark(r, { date: to, time: tm });
+  });
+  const rm = lessonOn(addDays(t, 4), 2);
+  if (rm) {
+    const busy = busyIntervals(rm.date, jobFor(rm));
+    const latest = [0, 6].includes(parse(rm.date).getDay()) ? '12:00' : '19:00';
+    const tm = [...pickableTimes()].reverse().find(x => x !== rm.time && x <= latest && canFit(x, rm.len, busy));
+    if (tm) mark(rm, { date: rm.date, time: tm });
+  }
+  const xk = addDays(t, 6), xs = db.students[5], xt = freeTime(xk, 60);
+  if (xt) db.extras.push({ id: uid(), studentId: xs.id, date: xk, time: xt, len: 60 });
+}
+
+// ---- シート・トースト ----
+function openSheet(title, sub, body) {
+  $('sheet').innerHTML = `<h3>${title}</h3><p class="sub">${sub}</p>${body}`;
+  $('overlay').hidden = false;
+}
+function openActions(title, sub, buttons) {
+  buttons = [...buttons, ['閉じる', 'close', closeSheet]];
+  openSheet(title, sub, `<div class="actions">${buttons.map(([label, cls]) => `<button class="${cls}">${label}</button>`).join('')}</div>`);
+  [...$('sheet').querySelectorAll('.actions button')].forEach((b, i) => b.addEventListener('click', buttons[i][2]));
+}
+function closeSheet() { $('overlay').hidden = true; }
+$('overlay').addEventListener('click', e => { if (e.target === $('overlay')) closeSheet(); });
+
+let toastTimer;
+function showToast(msg, undoable = true) {
+  $('toastText').textContent = msg; $('toast').hidden = false;
+  $('toastUndo').hidden = !undoable;
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => $('toast').hidden = true, 5000);
+}
+$('toastUndo').addEventListener('click', () => {
+  if (undoSnapshot) { db = JSON.parse(undoSnapshot); undoSnapshot = null; picking = null; save(); render(); }
+  $('toast').hidden = true;
+});
+
+// ---- 長押し → ドラッグ ----
+let press = null, drag = null;
+function attachPress(el, r) {
+  el.addEventListener('pointerdown', e => {
+    if (e.button > 0) return;
+    press = { el, r, x: e.clientX, y: e.clientY, lx: e.clientX, ly: e.clientY, moved: false };
+    press.timer = setTimeout(startDrag, 350);
+  });
+}
+function startDrag() {
+  if (!press) return;
+  const ghost = document.createElement('div');
+  ghost.className = 'ghost';
+  ghost.textContent = `${press.r.name}さん(${jobInfo(jobFor(press.r)).label})`;
+  document.body.appendChild(ghost);
+  press.el.classList.add('lifted');
+  drag = { ...press, ghost, target: null };
+  moveGhost(press.lx, press.ly);
+  if (navigator.vibrate) navigator.vibrate(15);
+}
+function moveGhost(x, y) {
+  drag.ghost.style.left = x + 'px'; drag.ghost.style.top = y + 'px';
+  const hit = document.elementFromPoint(x, y);
+  const day = hit && hit.closest('.day:not(.blank)');
+  if (drag.target && drag.target !== day) drag.target.classList.remove('drop-target');
+  if (day) day.classList.add('drop-target');
+  drag.target = day;
+}
+function endPress(cancelled) {
+  if (press) clearTimeout(press.timer);
+  if (drag) {
+    drag.ghost.remove(); drag.el.classList.remove('lifted');
+    const target = drag.target;
+    if (target) target.classList.remove('drop-target');
+    const job = jobFor(drag.r);
+    drag = null; press = null;
+    if (target && !cancelled) openTimeSheet(target.dataset.date, job);
+    return;
+  }
+  if (press && !press.moved && !cancelled) openRowSheet(press.r);
+  press = null;
+}
+document.addEventListener('pointermove', e => {
+  if (drag) { moveGhost(e.clientX, e.clientY); return; }
+  if (!press) return;
+  press.lx = e.clientX; press.ly = e.clientY;
+  if (Math.hypot(e.clientX - press.x, e.clientY - press.y) > 10) { press.moved = true; clearTimeout(press.timer); }
+});
+document.addEventListener('pointerup', () => endPress(false));
+document.addEventListener('pointercancel', () => endPress(true));
+// ドラッグ中は画面のスクロールを止める(iPad Safari 向け)
+document.addEventListener('touchmove', e => { if (drag) e.preventDefault(); }, { passive: false });
+document.addEventListener('contextmenu', e => { if (press || drag) e.preventDefault(); });
+
+// ---- 画面切り替え ----
+const VIEW_TITLES = { pend: '振替未定', tt: 'いつもの時間割', set: '設定' };
+function showView(v) {
+  currentView = v;
+  ['cal', 'pend', 'tt', 'set'].forEach(x => { $(x + 'View').hidden = x !== v; });
+  document.querySelectorAll('.tabbar button').forEach(b => b.classList.toggle('active', b.dataset.view === v));
+  $('monthNav').hidden = v !== 'cal'; $('goToday').hidden = v !== 'cal';
+  $('viewTitle').hidden = v === 'cal'; $('viewTitle').textContent = VIEW_TITLES[v] || '';
+}
+document.querySelectorAll('.tabbar button').forEach(b => b.addEventListener('click', () => {
+  if (b.dataset.view !== 'cal') stopPicking();
+  showView(b.dataset.view);
+}));
+$('ttMode').querySelectorAll('button').forEach(b => b.addEventListener('click', () => { ttMode = b.dataset.mode; renderTimetable(); }));
+$('addStudent').addEventListener('click', openAddStudentSheet);
+$('pickCancel').addEventListener('click', stopPicking);
+$('prevMonth').addEventListener('click', () => { viewMonth = new Date(viewMonth.getFullYear(), viewMonth.getMonth() - 1, 1); renderCalendar(); });
+$('nextMonth').addEventListener('click', () => { viewMonth = new Date(viewMonth.getFullYear(), viewMonth.getMonth() + 1, 1); renderCalendar(); });
+$('goToday').addEventListener('click', () => { const d = new Date(); viewMonth = new Date(d.getFullYear(), d.getMonth(), 1); selected = today(); render(); });
+// 開きっぱなしで日付が変わったときに「今日」を更新する
+document.addEventListener('visibilitychange', () => { if (!document.hidden) render(); });
+
+showView('cal');
+render();
+</script>
+</body>
+</html>
