@@ -85,6 +85,8 @@ main { flex: 1; min-height: 0; position: relative; }
   user-select: none; -webkit-user-select: none;
 }
 .day.blank { visibility: hidden; }
+.day { -webkit-touch-callout: none; }
+.day.pressing { border-color: var(--sun); }
 .day.today { background: var(--today); }
 .day.selected { border: 2px solid var(--accent); padding: 4px 5px; }
 .day.drop-target { background: var(--accent-soft); border: 2px dashed var(--accent); padding: 4px 5px; }
@@ -100,6 +102,7 @@ main { flex: 1; min-height: 0; position: relative; }
 .mark.pending { background: var(--pending-bg); color: var(--pending); font-weight: 600; }
 .mark.moved { background: var(--moved-bg); color: var(--moved); }
 .mark.extra { background: var(--extra-bg); color: var(--extra); }
+.mark.cancelled { background: #fff; color: var(--absent); border: 1px solid var(--line); }
 
 /* 日の一覧 */
 .day-panel { flex: 1; min-height: 0; display: flex; flex-direction: column; }
@@ -130,6 +133,9 @@ main { flex: 1; min-height: 0; position: relative; }
 .row.moved .chip { background: #fff; color: var(--moved); }
 .row.extra { background: var(--extra-bg); border-left-color: var(--extra); }
 .row.extra .chip { background: #fff; color: var(--extra); }
+.row.cancelled { background: var(--absent-bg); border-left-color: var(--line); opacity: .7; }
+.row.cancelled .name, .row.cancelled .time { color: var(--absent); text-decoration: line-through; }
+.row.cancelled .chip { background: #fff; color: var(--absent); border: 1px solid var(--line); }
 .row.lifted { opacity: .35; }
 .row.tt { cursor: pointer; }
 .row.tt .chip { background: var(--accent-soft); color: var(--accent); }
@@ -260,7 +266,7 @@ main { flex: 1; min-height: 0; position: relative; }
       <div class="day-panel">
         <div class="day-head">
           <h2 id="dayTitle"></h2>
-          <span class="hint">長押しして上の日付へ動かすと振替 / タップでお休み・時間変更・追加</span>
+          <span class="hint">長押しして上の日付へ動かすと振替 / タップでお休み・時間変更・追加 / 日付の長押しでその日のコマを全部消す</span>
         </div>
         <div class="list" id="dayList"></div>
       </div>
@@ -336,6 +342,7 @@ const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;'
 
 // ---- データ(この端末のブラウザ内に保存) ----
 // students: 生徒 / slots: いつもの枠(from〜untilの前日まで有効) / changes: その回だけの変更 / extras: 追加レッスン
+// changes の cancelled: true は「その回は無し」(振替先を作らない。日付の長押しでまとめて付ける)
 const STORE_KEY = 'pianoStudio.v1';
 const emptyDb = () => ({ version: 1, students: [], slots: [], changes: {}, extras: [], lastBackup: null });
 function load() {
@@ -375,7 +382,7 @@ function daySchedule(k) {
   db.slots.filter(s => s.dow === dow && activeOn(s, k)).forEach(s => {
     const c = db.changes[chKey({ slotId: s.id, date: k })];
     if (c && c.makeup && c.makeup.date === k) return; // 時間変更は変更後の時間にだけ表示する
-    rows.push({ type: c ? 'absent' : 'regular', slot: s, studentId: s.studentId, name: nameOf(s.studentId), date: k, on: k, time: s.time, len: s.len, change: c });
+    rows.push({ type: !c ? 'regular' : c.cancelled ? 'cancelled' : 'absent', slot: s, studentId: s.studentId, name: nameOf(s.studentId), date: k, on: k, time: s.time, len: s.len, change: c });
   });
   Object.values(db.changes).forEach(c => {
     if (!c.makeup || c.makeup.date !== k) return;
@@ -387,7 +394,7 @@ function daySchedule(k) {
     rows.push({ type: 'extra', extra: x, studentId: x.studentId, name: nameOf(x.studentId), date: k, on: k, time: x.time, len: x.len }));
   return rows.sort((a, b) => a.time.localeCompare(b.time));
 }
-const unresolved = () => Object.values(db.changes).filter(c => !c.makeup && slotById(c.slotId)).sort((a, b) => a.date.localeCompare(b.date));
+const unresolved = () => Object.values(db.changes).filter(c => !c.makeup && !c.cancelled && slotById(c.slotId)).sort((a, b) => a.date.localeCompare(b.date));
 const jobFor = r => r.type === 'extra' ? { kind: 'extraMove', extraId: r.extra.id } : { kind: 'move', src: { slotId: r.slot.id, date: r.date } };
 function jobInfo(job) {
   if (job.kind === 'move') { const s = slotById(job.src.slotId); return { name: nameOf(s.studentId), len: s.len, label: `${fmt(job.src.date)} ${s.time} の分` }; }
@@ -397,7 +404,7 @@ function jobInfo(job) {
 // その日に埋まっている時間帯。job を渡すと、動かす本人の枠は空きとみなす
 function busyIntervals(k, job) {
   return daySchedule(k).filter(r => {
-    if (r.type === 'absent') return false;
+    if (r.type === 'absent' || r.type === 'cancelled') return false;
     if (job && job.kind === 'move' && r.slot && r.slot.id === job.src.slotId && r.date === job.src.date) return false;
     if (job && job.kind === 'extraMove' && r.extra && r.extra.id === job.extraId) return false;
     return true;
@@ -432,16 +439,17 @@ function renderCalendar() {
     const d = new Date(viewMonth.getFullYear(), viewMonth.getMonth(), n), k = toKey(d);
     const rows = daySchedule(k);
     const count = type => rows.filter(r => r.type === type).length;
-    const lessons = rows.filter(r => r.type !== 'absent').length;
+    const lessons = rows.filter(r => r.type !== 'absent' && r.type !== 'cancelled').length;
     const pend = rows.filter(r => r.type === 'absent' && !r.change.makeup).length;
     const absent = count('absent') - pend;
-    const marks = [['pending', '未定', pend], ['absent', '休', absent], ['makeup', '振', count('makeup')], ['moved', '変', count('moved')], ['extra', '追', count('extra')]];
+    const marks = [['pending', '未定', pend], ['absent', '休', absent], ['makeup', '振', count('makeup')], ['moved', '変', count('moved')], ['extra', '追', count('extra')], ['cancelled', '無', count('cancelled')]];
     el.className = 'day' + (d.getDay() === 0 ? ' sun' : '') + (d.getDay() === 6 ? ' sat' : '')
       + (k === t ? ' today' : '') + (k === selected ? ' selected' : '');
     el.dataset.date = k;
     el.innerHTML = `<div class="num"><span>${n}</span>${lessons ? `<span class="cnt">${lessons}コマ</span>` : ''}</div>
       <div class="marks">${marks.filter(m => m[2]).map(([cls, label, c]) => `<span class="mark ${cls}">${label}${c}</span>`).join('')}</div>`;
-    el.addEventListener('click', () => onDayTap(k));
+    el.addEventListener('click', () => { if (dayPressFired) { dayPressFired = false; return; } onDayTap(k); });
+    attachDayPress(el, k);
     grid.appendChild(el);
   }
   $('calView').classList.toggle('picking', !!picking);
@@ -456,7 +464,7 @@ function renderCalendar() {
 
 function renderDay() {
   const rows = daySchedule(selected);
-  const lessons = rows.filter(r => r.type !== 'absent').length;
+  const lessons = rows.filter(r => r.type !== 'absent' && r.type !== 'cancelled').length;
   $('dayTitle').textContent = `${fmt(selected)}  ${lessons}コマ`;
   const list = $('dayList'); list.innerHTML = '';
   if (!db.slots.length) {
@@ -471,6 +479,7 @@ function renderDay() {
     if (r.type === 'makeup') chip = `振替(${fmt(r.date)}の分)`;
     if (r.type === 'moved') chip = `時間変更 ${r.slot.time}→${r.time}`;
     if (r.type === 'extra') chip = '追加レッスン';
+    if (r.type === 'cancelled') chip = 'この回は無し';
     el.className = `row ${r.type}` + (r.type === 'absent' && !r.change.makeup ? ' unresolved' : '');
     el.innerHTML = `<span class="time">${r.time}<small>〜${endOf(r.time, r.len)}</small></span><span class="name">${esc(r.name)}${gradeTag(r.studentId)}</span>`
       + (r.len === 60 ? '<span class="len">1時間</span>' : '') + (chip ? `<span class="chip">${chip}</span>` : '');
@@ -604,6 +613,25 @@ function setUnresolved(src) {
 function clearChange(src) {
   record(() => delete db.changes[chKey(src)], `${nameOf(slotById(src.slotId).studentId)}さん: いつもの予定に戻しました`);
 }
+// その日のコマを全部消す: いつもの枠と時間変更は「この回は無し」、よそから来た振替は振替先未定に戻し、追加レッスンは削除する
+function clearDay(k) {
+  const rows = daySchedule(k);
+  rows.forEach(r => {
+    if (r.type === 'regular' || r.type === 'moved') db.changes[chKey({ slotId: r.slot.id, date: r.date })] = { slotId: r.slot.id, date: r.date, makeup: null, cancelled: true };
+    if (r.type === 'makeup') db.changes[chKey(r.change)] = { slotId: r.change.slotId, date: r.change.date, makeup: null };
+  });
+  db.extras = db.extras.filter(x => x.date !== k);
+}
+function openClearDaySheet(k) {
+  const rows = daySchedule(k).filter(r => ['regular', 'moved', 'makeup', 'extra'].includes(r.type));
+  if (!rows.length) { showToast(`${fmt(k)} に消せるコマはありません`, false); return; }
+  const makeups = rows.filter(r => r.type === 'makeup');
+  const sub = `${rows.map(r => `${r.time} ${esc(r.name)}さん`).join('<br>')}<br><br>この${rows.length}コマを消します。`
+    + (makeups.length ? `<br>よその日から振替えてきた${makeups.length}件は「振替先未定」に戻ります。` : '')
+    + '<br>消したあとも、この日に振替や追加レッスンを入れられます。';
+  openActions(`${fmt(k)} のコマを全部消しますか?`, sub,
+    [['OK(全部消す)', 'main', () => { closeSheet(); record(() => clearDay(k), `${fmt(k)} のコマを${rows.length}件消しました`); }]]);
+}
 function applyJob(job, date, time, len) {
   if (job.kind === 'move') { setMakeup(job.src, date, time); return; }
   if (job.kind === 'extra') {
@@ -640,6 +668,10 @@ function openRowSheet(r) {
     buttons = [[r.change.makeup ? '振替先を変える' : '振替先を選ぶ', 'main', () => startPicking(job)]];
     if (r.change.makeup) buttons.push(['振替先を未定に戻す', '', () => { closeSheet(); setUnresolved(src); }]);
     buttons.push(['お休みを取り消す(いつも通り来る)', 'warn', () => { closeSheet(); clearChange(src); }]);
+  } else if (r.type === 'cancelled') {
+    sub = `${fmt(r.date)} ${r.time}〜${endOf(r.time, r.len)}(この回は無し)`;
+    buttons = [['いつもの予定に戻す', 'main', () => { closeSheet(); clearChange(src); }],
+      ['別の日に振替える', '', () => startPicking(job)], ['お休みにする(振替先は未定)', '', () => { closeSheet(); setUnresolved(src); }]];
   } else if (r.type === 'extra') {
     sub = `${fmt(r.on)} ${r.time}〜${endOf(r.time, r.len)} の追加レッスン`;
     buttons = [sameDay, ['別の日に移す', '', () => startPicking(job)],
@@ -1011,7 +1043,32 @@ document.addEventListener('pointerup', () => endPress(false));
 document.addEventListener('pointercancel', () => endPress(true));
 // ドラッグ中は画面のスクロールを止める(iPad Safari 向け)
 document.addEventListener('touchmove', e => { if (drag) e.preventDefault(); }, { passive: false });
-document.addEventListener('contextmenu', e => { if (press || drag) e.preventDefault(); });
+document.addEventListener('contextmenu', e => { if (press || drag || dayPress || dayPressFired) e.preventDefault(); });
+
+// ---- 日付の長押し → その日のコマを全部消す ----
+let dayPress = null, dayPressFired = false;
+function attachDayPress(el, k) {
+  el.addEventListener('pointerdown', e => {
+    if (e.button > 0 || picking || drag) return;
+    dayPressFired = false;
+    dayPress = { el, x: e.clientX, y: e.clientY };
+    dayPress.timer = setTimeout(() => {
+      el.classList.remove('pressing'); dayPress = null; dayPressFired = true;
+      if (navigator.vibrate) navigator.vibrate(15);
+      openClearDaySheet(k);
+    }, 500);
+    el.classList.add('pressing');
+  });
+}
+function cancelDayPress() {
+  if (!dayPress) return;
+  clearTimeout(dayPress.timer); dayPress.el.classList.remove('pressing'); dayPress = null;
+}
+document.addEventListener('pointermove', e => {
+  if (dayPress && Math.hypot(e.clientX - dayPress.x, e.clientY - dayPress.y) > 10) cancelDayPress();
+});
+document.addEventListener('pointerup', cancelDayPress);
+document.addEventListener('pointercancel', cancelDayPress);
 
 // ---- 画面切り替え ----
 const VIEW_TITLES = { pend: '振替未定', tt: 'いつもの時間割', set: '設定' };
