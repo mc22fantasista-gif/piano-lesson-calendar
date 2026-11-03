@@ -79,7 +79,7 @@ main { flex: 1; min-height: 0; position: relative; }
 .weekdays div:first-child { color: var(--sun); }
 .weekdays div:last-child { color: var(--sat); }
 .day {
-  height: clamp(64px, 8.6vh, 96px); border-radius: 10px; border: 1px solid var(--line);
+  min-height: clamp(64px, 8.6vh, 96px); border-radius: 10px; border: 1px solid var(--line);
   padding: 5px 6px; display: flex; flex-direction: column; gap: 3px; cursor: pointer;
   background: var(--surface); transition: background .12s, border-color .12s;
   user-select: none; -webkit-user-select: none;
@@ -102,6 +102,12 @@ main { flex: 1; min-height: 0; position: relative; }
 .mark.pending { background: var(--pending-bg); color: var(--pending); font-weight: 600; }
 .mark.moved { background: var(--moved-bg); color: var(--moved); }
 .mark.extra { background: var(--extra-bg); color: var(--extra); }
+/* マス目の生徒の印(姓と名の1文字目)。種類ごとに色を変える */
+.inis { display: flex; flex-wrap: wrap; gap: 2px; }
+.ini { font-size: 11px; line-height: 1; padding: 2px 2px; border-radius: 4px; white-space: nowrap; background: #f1efec; color: var(--text); border: 1px solid transparent; }
+.ini.makeup { background: var(--makeup-bg); color: var(--makeup); border-color: #b9dcc8; font-weight: 600; }
+.ini.moved { background: var(--moved-bg); color: var(--moved); border-color: #b5d5e8; font-weight: 600; }
+.ini.extra { background: var(--extra-bg); color: var(--extra); border-color: #dcc6ea; font-weight: 600; }
 
 /* 日の一覧 */
 .day-panel { flex: 1; min-height: 0; display: flex; flex-direction: column; }
@@ -374,6 +380,8 @@ if (navigator.storage && navigator.storage.persist) navigator.storage.persist().
 
 const studentById = id => db.students.find(s => s.id === id);
 const nameOf = id => (studentById(id) || { name: '(削除済み)' }).name;
+// 姓と名の1文字目(空白がなければ頭の2文字)
+const initials = name => { const parts = name.trim().split(/[\s　]+/); return parts.length >= 2 ? Array.from(parts[0])[0] + Array.from(parts[1])[0] : Array.from(name.trim()).slice(0, 2).join(''); };
 const gradeTag = id => { const g = gradeOf(studentById(id)); return g ? `<span class="grade">${g}</span>` : ''; };
 const byYomi = (a, b) => (a.yomi || '￿' + a.name).localeCompare(b.yomi || '￿' + b.name, 'ja');
 const slotById = id => db.slots.find(s => s.id === id);
@@ -460,11 +468,15 @@ function renderCalendar() {
     const lessons = rows.filter(r => r.type !== 'absent').length;
     const pend = rows.filter(r => r.type === 'absent' && !r.change.makeup).length;
     const absent = count('absent') - pend;
-    const marks = [['pending', '未定', pend], ['absent', '休', absent], ['makeup', '振', count('makeup')], ['moved', '変', count('moved')], ['extra', '追', count('extra')]];
+    const marks = [['pending', '未定', pend], ['absent', '休', absent]];
+    const TYPE_LABEL = { makeup: '振替', moved: '時間変更', extra: '追加・不定期' };
+    const inis = rows.filter(r => r.type !== 'absent').map(r =>
+      `<span class="ini ${r.type}" title="${r.time} ${esc(r.name)}${TYPE_LABEL[r.type] ? '(' + TYPE_LABEL[r.type] + ')' : ''}">${esc(initials(r.name))}</span>`).join('');
     el.className = 'day' + (d.getDay() === 0 ? ' sun' : '') + (d.getDay() === 6 ? ' sat' : '')
       + (k === t ? ' today' : '') + (k === selected ? ' selected' : '');
     el.dataset.date = k;
     el.innerHTML = `<div class="num"><span>${n}</span>${lessons ? `<span class="cnt">${lessons}コマ</span>` : ''}</div>
+      ${inis ? `<div class="inis">${inis}</div>` : ''}
       <div class="marks">${marks.filter(m => m[2]).map(([cls, label, c]) => `<span class="mark ${cls}">${label}${c}</span>`).join('')}</div>`;
     el.addEventListener('click', () => { if (dayPressFired) { dayPressFired = false; return; } onDayTap(k); });
     attachDayPress(el, k);
