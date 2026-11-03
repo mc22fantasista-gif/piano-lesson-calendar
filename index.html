@@ -221,6 +221,9 @@ main { flex: 1; min-height: 0; position: relative; }
 .times button.usual small { color: var(--accent); }
 .times button:disabled { background: var(--absent-bg); color: #b8b2ab; cursor: default; }
 .times button:disabled small { color: #b8b2ab; }
+.custom-time { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; font-size: 14px; color: var(--muted); flex-wrap: wrap; }
+.custom-time select, .field .hm select { height: 46px; font-size: 16px; border: 1px solid var(--line); border-radius: 10px; padding: 0 10px; background: var(--surface); color: var(--text); font-family: inherit; }
+.field .hm { flex: 1; display: flex; align-items: center; gap: 6px; }
 .len-toggle { display: flex; gap: 8px; margin-bottom: 12px; align-items: center; font-size: 14px; color: var(--muted); }
 
 /* ドラッグ中の影・トースト */
@@ -325,8 +328,21 @@ const timeRange = (from, to) => {
   return out;
 };
 // レッスンができる時間帯は全曜日 8:30〜21:00(開始は最も遅くて20:30)
+// 一覧のボタンは30分おき。それ以外の時刻(16:45 など)は5分刻みで指定できる
 const pickableTimes = () => timeRange('08:30', '20:30');
-const DAY_END = toMin('21:00');
+const DAY_START = toMin('08:30'), DAY_END = toMin('21:00');
+// 時・分を選ぶ欄。name は時と分の select に付ける名前の頭
+function hmSelect(name, t) {
+  const [h, m] = (t || '15:00').split(':').map(Number);
+  const hours = Array.from({ length: 13 }, (_, i) => i + 8);
+  const mins = Array.from({ length: 12 }, (_, i) => i * 5);
+  return `<span class="hm"><select name="${name}H">${hours.map(x => `<option value="${x}"${x === h ? ' selected' : ''}>${x}時</option>`).join('')}</select>`
+    + `<select name="${name}M">${mins.map(x => `<option value="${x}"${x === m ? ' selected' : ''}>${pad(x)}分</option>`).join('')}</select></span>`;
+}
+const readHm = (root, name) => `${pad(Number(root.querySelector(`[name=${name}H]`).value))}:${pad(Number(root.querySelector(`[name=${name}M]`).value))}`;
+// 時間帯(8:30〜21:00)に収まらないときの説明
+const rangeError = (t, len) => toMin(t) < DAY_START ? '開始は8:30以降にしてください'
+  : toMin(t) + len > DAY_END ? `${lenLabel(len)}だと21:00を過ぎてしまいます` : null;
 const lenLabel = len => len === 60 ? '1時間' : '30分';
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 // 学年は「登録した年度の学年」を持ち、4月(新年度)ごとに1つずつ上げて表示する。大人で止まる
@@ -413,6 +429,8 @@ const canFit = (t, len, busy) => {
 };
 // いつもの枠どうしの重なり(from 以降に有効な枠が対象)
 function slotConflict(v, excludeId) {
+  const outside = rangeError(v.time, v.len);
+  if (outside) return outside;
   const st = toMin(v.time), en = st + v.len;
   const hit = db.slots.find(s => s.id !== excludeId && s.dow === v.dow && (!s.until || s.until > v.from)
     && toMin(s.time) < en && toMin(s.time) + s.len > st);
@@ -693,11 +711,12 @@ function openTimeSheet(k, job, lenOverride) {
   const len = lenOverride || info.len;
   const usual = job.kind === 'move' ? slotById(job.src.slotId).time : null;
   const busy = busyIntervals(k, job);
-  const html = pickableTimes().map(t => {
+  const times = [...new Set([...pickableTimes(), ...(usual ? [usual] : [])])].sort();
+  const html = times.map(t => {
     const st = toMin(t);
     const inside = busy.find(b => st >= b.from && st < b.to);
     if (inside) return `<button disabled>${t}<small>${esc(inside.name.split(/\s/)[0])}さん</small></button>`;
-    if (!canFit(t, len, busy)) return `<button disabled>${t}<small>1時間は入らない</small></button>`;
+    if (!canFit(t, len, busy)) return `<button disabled>${t}<small>${len === 60 ? '1時間は入らない' : '入らない'}</small></button>`;
     return `<button data-t="${t}" class="${t === usual ? 'usual' : ''}">${t}<small>${t === usual ? 'いつもの時間' : '空き'}</small></button>`;
   }).join('');
   const lenToggle = job.kind === 'move' ? '' :
@@ -705,7 +724,16 @@ function openTimeSheet(k, job, lenOverride) {
   const sameDay = job.kind === 'move' && k === job.src.date;
   openSheet(sameDay ? `${fmt(k)} の時間を変える` : `${fmt(k)} の何時にしますか?`,
     `${esc(info.name)}さん(${info.label}・${lenLabel(len)})`,
-    `${lenToggle}<div class="times">${html}</div><div class="actions"><button class="close">やめる</button></div>`);
+    `${lenToggle}<div class="times">${html}</div>
+    <div class="custom-time">ほかの時刻 ${hmSelect('ct', usual || '15:00')}<button class="btn-sub" id="ctBtn">この時刻にする</button></div>
+    <div class="actions"><button class="close">やめる</button></div>`);
+  $('ctBtn').addEventListener('click', () => {
+    const t = readHm($('sheet'), 'ct');
+    const busyHit = busy.find(b => b.from < toMin(t) + len && b.to > toMin(t));
+    const err = rangeError(t, len) || (busyHit ? `${busyHit.name}さんのレッスンと重なっています` : null);
+    if (err) { showSheetError(err); return; }
+    closeSheet(); picking = null; selected = k; applyJob(job, k, t, len);
+  });
   $('sheet').querySelectorAll('.times button[data-t]').forEach(b => b.addEventListener('click', () => {
     closeSheet(); picking = null; selected = k; applyJob(job, k, b.dataset.t, len);
   }));
@@ -717,7 +745,7 @@ function openTimeSheet(k, job, lenOverride) {
 function slotFields(v) {
   return `
     <label class="field"><span>曜日</span><select name="dow">${DOW_ORDER.map(d => `<option value="${d}"${d === v.dow ? ' selected' : ''}>${WD[d]}曜日</option>`).join('')}</select></label>
-    <label class="field"><span>開始時刻</span><select name="time">${pickableTimes().map(t => `<option${t === v.time ? ' selected' : ''}>${t}</option>`).join('')}</select></label>
+    <div class="field"><span>開始時刻</span>${hmSelect('time', v.time)}</div>
     <div class="field"><span>長さ</span><div class="seg" data-name="len"><button type="button" data-v="30" class="${v.len === 30 ? 'on' : ''}">30分</button><button type="button" data-v="60" class="${v.len === 60 ? 'on' : ''}">1時間</button></div></div>
     <label class="field"><span>いつから</span><input type="date" name="from" value="${v.from}"></label>`;
 }
@@ -725,7 +753,7 @@ function readSlotFields() {
   const sh = $('sheet');
   return {
     dow: Number(sh.querySelector('[name=dow]').value),
-    time: sh.querySelector('[name=time]').value,
+    time: readHm(sh, 'time'),
     len: Number(sh.querySelector('[data-name=len] .on').dataset.v),
     from: sh.querySelector('[name=from]').value || today(),
   };
