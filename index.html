@@ -930,6 +930,8 @@ function openNewSlotSheet(st) {
 
 // 変更する日以降の、この枠のお休み・振替の記録
 const changesFrom = (slot, k) => Object.values(db.changes).filter(c => c.slotId === slot.id && c.date >= k);
+// 確認で数えるのは画面に出る記録だけ(「消した回」は画面に出ないので数えない)
+const visibleChanges = list => list.filter(c => !c.cancelled);
 
 function openSlotSheet(slot) {
   const name = nameOf(slot.studentId);
@@ -943,23 +945,31 @@ function openSlotSheet(slot) {
     if (v.dow === slot.dow && v.time === slot.time && v.len === slot.len) { showSheetError('曜日・時刻・長さが今と同じです'); return; }
     const conflict = slotConflict(v, slot.id);
     if (conflict) { showSheetError(conflict); return; }
-    const affected = changesFrom(slot, v.from);
-    if (affected.length && !confirm(`${fmt(v.from)}以降にこの枠のお休み・振替の記録が${affected.length}件あります。枠を変えると消えます。よろしいですか?`)) return;
+    const affected = changesFrom(slot, v.from), shown = visibleChanges(affected);
+    if (shown.length && !confirm(`${fmt(v.from)}以降にこの枠のお休み・振替の記録が${shown.length}件あります。枠を変えると消えます。よろしいですか?`)) return;
     closeSheet();
     record(() => {
+      // 「消した回」は同じ曜日のままなら新しい枠に引き継ぐ(その日は消えたまま)。曜日が変わるならその日に枠がなくなるので捨てる
+      const keepCancelled = v.dow === slot.dow;
       affected.forEach(c => delete db.changes[chKey(c)]);
       const target = slotById(slot.id);
+      let newId = target.id;
       if (v.from <= target.from) Object.assign(target, { dow: v.dow, time: v.time, len: v.len, from: v.from });
       else {
-        db.slots.push({ id: uid(), studentId: target.studentId, dow: v.dow, time: v.time, len: v.len, from: v.from, until: target.until });
+        newId = uid();
+        db.slots.push({ id: newId, studentId: target.studentId, dow: v.dow, time: v.time, len: v.len, from: v.from, until: target.until });
         target.until = v.from;
       }
+      if (keepCancelled) affected.filter(c => c.cancelled).forEach(c => {
+        const moved = { ...c, slotId: newId };
+        db.changes[chKey(moved)] = moved;
+      });
     }, `${name}さん: ${fmt(v.from)}から ${WD[v.dow]}曜 ${v.time}(${lenLabel(v.len)})に変更`);
   });
   $('endBtn').addEventListener('click', () => {
     const k = readSlotFields().from;
-    const affected = changesFrom(slot, k);
-    if (!confirm(`${name}さんの ${WD[slot.dow]}曜 ${slot.time} の枠を、${fmt(k)}からなくします。` + (affected.length ? `\nこの日以降のお休み・振替の記録${affected.length}件も消えます。` : '') + '\nよろしいですか?')) return;
+    const affected = changesFrom(slot, k), shown = visibleChanges(affected);
+    if (!confirm(`${name}さんの ${WD[slot.dow]}曜 ${slot.time} の枠を、${fmt(k)}からなくします。` + (shown.length ? `\nこの日以降のお休み・振替の記録${shown.length}件も消えます。` : '') + '\nよろしいですか?')) return;
     closeSheet();
     record(() => {
       const target = slotById(slot.id);
