@@ -131,6 +131,7 @@ main { flex: 1; min-height: 0; position: relative; }
 .row.absent .name, .row.absent .time { color: var(--absent); text-decoration: line-through; }
 .row.absent .chip { background: #fff; color: var(--absent); border: 1px solid var(--line); }
 .row.absent.unresolved { border-left-color: var(--pending); }
+.row.absent.nomakeup { opacity: .6; }
 .row.absent.unresolved .chip { background: var(--pending-bg); color: var(--pending); border-color: transparent; font-weight: 600; }
 .row.makeup { background: var(--makeup-bg); border-left-color: var(--makeup); }
 .row.makeup .chip { background: #fff; color: var(--makeup); }
@@ -362,6 +363,7 @@ const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;'
 // ---- データ(この端末のブラウザ内に保存) ----
 // students: 生徒 / slots: いつもの枠(from〜untilの前日まで有効) / changes: その回だけの変更 / extras: 追加レッスン
 // changes の cancelled: true は「その回は無し」(画面には出さない。日付の長押しでまとめて付け・戻す)
+// changes の noMakeup: true は「お休み(振替なし)」(振替未定の一覧から外し、日の一覧には薄く残す)
 const STORE_KEY = 'pianoStudio.v1';
 const emptyDb = () => ({ version: 1, students: [], slots: [], changes: {}, extras: [], lastBackup: null });
 function load() {
@@ -418,7 +420,7 @@ function daySchedule(k) {
     rows.push({ type: 'extra', extra: x, studentId: x.studentId, name: nameOf(x.studentId), date: k, on: k, time: x.time, len: x.len }));
   return rows.sort((a, b) => a.time.localeCompare(b.time));
 }
-const unresolved = () => Object.values(db.changes).filter(c => !c.makeup && !c.cancelled && slotById(c.slotId)).sort((a, b) => a.date.localeCompare(b.date));
+const unresolved = () => Object.values(db.changes).filter(c => !c.makeup && !c.cancelled && !c.noMakeup && slotById(c.slotId)).sort((a, b) => a.date.localeCompare(b.date));
 const jobFor = r => r.type === 'extra' ? { kind: 'extraMove', extraId: r.extra.id } : { kind: 'move', src: { slotId: r.slot.id, date: r.date } };
 function jobInfo(job) {
   if (job.kind === 'move') { const s = slotById(job.src.slotId); return { name: nameOf(s.studentId), len: s.len, label: `${fmt(job.src.date)} ${s.time} の分` }; }
@@ -466,7 +468,7 @@ function renderCalendar() {
     const rows = daySchedule(k);
     const count = type => rows.filter(r => r.type === type).length;
     const lessons = rows.filter(r => r.type !== 'absent').length;
-    const pend = rows.filter(r => r.type === 'absent' && !r.change.makeup).length;
+    const pend = rows.filter(r => r.type === 'absent' && !r.change.makeup && !r.change.noMakeup).length;
     const absent = count('absent') - pend;
     const marks = [['pending', '未定', pend], ['absent', '休', absent]];
     const TYPE_LABEL = { makeup: '振替', moved: '時間変更', extra: '追加・不定期' };
@@ -505,11 +507,11 @@ function renderDay() {
   rows.forEach(r => {
     const el = document.createElement('div');
     let chip = '';
-    if (r.type === 'absent') chip = r.change.makeup ? `お休み → ${fmt(r.change.makeup.date)} ${r.change.makeup.time}` : '振替先未定';
+    if (r.type === 'absent') chip = r.change.makeup ? `お休み → ${fmt(r.change.makeup.date)} ${r.change.makeup.time}` : r.change.noMakeup ? 'お休み(振替なし)' : '振替先未定';
     if (r.type === 'makeup') chip = `振替(${fmt(r.date)}の分)`;
     if (r.type === 'moved') chip = `時間変更 ${r.slot.time}→${r.time}`;
     if (r.type === 'extra') chip = isIrregular(r.studentId) ? '不定期' : '追加レッスン';
-    el.className = `row ${r.type}` + (r.type === 'absent' && !r.change.makeup ? ' unresolved' : '');
+    el.className = `row ${r.type}` + (r.type === 'absent' && !r.change.makeup ? (r.change.noMakeup ? ' nomakeup' : ' unresolved') : '');
     el.innerHTML = `<span class="time">${r.time}<small>〜${endOf(r.time, r.len)}</small></span><span class="name">${esc(r.name)}${gradeTag(r.studentId)}</span>`
       + (r.len === 60 ? '<span class="len">1時間</span>' : '') + (chip ? `<span class="chip">${chip}</span>` : '');
     attachPress(el, r);
@@ -530,8 +532,13 @@ function renderPending() {
     const el = document.createElement('div');
     el.className = 'card';
     el.innerHTML = `<div class="info"><div class="who">${esc(nameOf(s.studentId))}</div><div class="when">${fmt(c.date)} ${s.time} のお休み</div></div>
-      <span class="age${age >= 7 ? ' old' : ''}">${ageText}</span><button class="btn-primary">振替先を決める</button>`;
-    el.querySelector('button').addEventListener('click', () => startPicking({ kind: 'move', src: { slotId: c.slotId, date: c.date } }));
+      <span class="age${age >= 7 ? ' old' : ''}">${ageText}</span><button class="btn-sub warn">振替しない</button><button class="btn-primary">振替先を決める</button>`;
+    el.querySelector('.btn-primary').addEventListener('click', () => startPicking({ kind: 'move', src: { slotId: c.slotId, date: c.date } }));
+    el.querySelector('.btn-sub').addEventListener('click', () => {
+      if (!confirm(`${nameOf(s.studentId)}さん ${fmt(c.date)} ${s.time} のお休みを、振替なしにしますか?
+(振替未定の一覧から外れます。その日の一覧には「お休み(振替なし)」として薄く残り、あとから振替先を決めたり戻したりできます)`)) return;
+      setNoMakeup({ slotId: c.slotId, date: c.date });
+    });
     list.appendChild(el);
   });
 }
@@ -650,6 +657,9 @@ function setMakeup(src, date, time) {
 function setUnresolved(src) {
   record(() => { db.changes[chKey(src)] = { ...src, makeup: null }; }, `${nameOf(slotById(src.slotId).studentId)}さん: お休み(振替先未定)を記録`);
 }
+function setNoMakeup(src) {
+  record(() => { db.changes[chKey(src)] = { ...src, makeup: null, noMakeup: true }; }, `${nameOf(slotById(src.slotId).studentId)}さん: ${fmt(src.date)} は振替なしにしました`);
+}
 function clearChange(src) {
   record(() => delete db.changes[chKey(src)], `${nameOf(slotById(src.slotId).studentId)}さん: いつもの予定に戻しました`);
 }
@@ -711,6 +721,17 @@ function openRowSheet(r) {
     sub = `${fmt(r.date)} ${r.time}〜${endOf(r.time, r.len)}(いつもの枠)`;
     buttons = [['別の日に振替える', 'main', () => startPicking(job)], sameDay,
       ['お休みにする(振替先は未定)', '', () => { closeSheet(); setUnresolved(src); }], duplicate];
+  } else if (r.type === 'absent' && r.change.noMakeup) {
+    sub = `${fmt(r.date)} ${r.time} のお休み(振替なし)`;
+    buttons = [['振替先を選ぶ', 'main', () => startPicking(job)],
+      ['振替先未定に戻す', '', () => { closeSheet(); setUnresolved(src); }],
+      ['お休みを取り消す(いつも通り来る)', '', () => { closeSheet(); clearChange(src); }],
+      ['完全に消す(一覧からも消す)', 'warn', () => {
+        if (!confirm(`${r.name}さん ${fmt(r.date)} ${r.time} の回を一覧からも消します。よろしいですか?
+(あとから戻すときは、その日付を長押しして「消したいつものコマを元に戻す」を押します)`)) return;
+        closeSheet();
+        record(() => { db.changes[chKey(src)] = { ...src, makeup: null, cancelled: true }; }, `${r.name}さん: ${fmt(r.date)} の回を消しました`);
+      }]];
   } else if (r.type === 'absent') {
     sub = `${fmt(r.date)} ${r.time} のお休み` + (r.change.makeup ? ` → ${fmt(r.change.makeup.date)} ${r.change.makeup.time} に振替済み` : '(振替先未定)');
     buttons = [[r.change.makeup ? '振替先を変える' : '振替先を選ぶ', 'main', () => startPicking(job)]];
